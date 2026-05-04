@@ -1,0 +1,13 @@
+{
+  "name": "devto-autopublish-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Publish markdown articles to dev.to via the API",
+  "scripts": {
+    "publish": "node publish.js"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "node-fetch": "^3.3.2"
+  }
+}
