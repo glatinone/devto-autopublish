@@ -1,0 +1,22 @@
+name = "content-engine"
+main = "src/worker.js"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Cron 1: Weekdays 09:00 WIB (02:00 UTC) — generate article
+# Cron 2: Sunday  08:00 WIB (01:00 UTC) — weekly digest
+[triggers]
+crons = ["0 2 * * 1-5"]
+
+# Cloudflare KV — stores Telegram idea inbox
+[[kv_namespaces]]
+binding = "IDEAS_KV"
+id = "0ea17d00252d4b63b5b5938db2b4c88d"
+
+# Secrets (set via: npx wrangler secret put <NAME>)
+# OPENAI_API_KEY
+# GITHUB_TOKEN
+# GITHUB_REPO          → glatinone/devto-autopublish
+# TELEGRAM_BOT_TOKEN
+# TELEGRAM_CHAT_ID
+# DEVTO_USERNAME       → your dev.to username (for weekly digest)

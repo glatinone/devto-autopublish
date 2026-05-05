@@ -1,0 +1,13 @@
+{
+  "name": "content-engine",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "trigger": "wrangler dev --test-scheduled"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
