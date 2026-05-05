@@ -7,6 +7,9 @@ on:
     paths:
       - "articles/*.md"
 
+permissions:
+  contents: write   # needed to commit devto_id back to repo
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -43,3 +46,14 @@ jobs:
               node scripts/publish.js "$FILE"
             fi
           done
+
+      - name: Commit devto_id back to repo
+        if: steps.changed.outputs.files != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet && echo "No devto_id changes to commit." || (
+            git add articles/
+            git commit -m "chore: backfill devto_id [skip ci]"
+            git push
+          )

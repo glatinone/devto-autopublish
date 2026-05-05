@@ -253,6 +253,25 @@ async function handleTelegram(body, env) {
     return;
   }
 
+  // ── URL → scrape + extract insights → save as idea ─────────────────────
+  if (looksLikeURL(text)) {
+    await sendTelegram(`🔍 Scraping URL...\n_${text.slice(0, 60)}..._`, env);
+    try {
+      const insight = await scrapeAndExtract(text, env);
+      await saveIdea(`[From URL: ${text}]\n${insight}`, env);
+      const ideas = await getIdeas(env);
+      await sendTelegram(
+        `🔗 *Insights tersimpan dari artikel!* (${ideas.length} ide total)\n\n` +
+        `${insight.slice(0, 600)}${insight.length > 600 ? "…" : ""}\n\n` +
+        `_Kirim /generate untuk pakai insight ini sebagai bahan artikel._`,
+        env
+      );
+    } catch (err) {
+      await sendTelegram(`❌ Gagal scrape URL: ${err.message}`, env);
+    }
+    return;
+  }
+
   // ── Plain message → save as idea ────────────────────────────────────────
   await saveIdea(text, env);
   const ideas = await getIdeas(env);
@@ -484,6 +503,66 @@ async function sendWeeklyDigest(env) {
     `👉 [dev.to Dashboard](https://dev.to/dashboard)`,
     env
   );
+}
+
+// ─── URL Scraping ──────────────────────────────────────────────────────────
+
+function looksLikeURL(text) {
+  return /^https?:\/\/\S+$/.test(text.trim());
+}
+
+async function scrapeAndExtract(url, env) {
+  // Fetch the page
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; content-engine/1.0)",
+      "Accept": "text/html,application/xhtml+xml",
+    },
+    redirect: "follow",
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const html = await res.text();
+
+  // Strip scripts, styles, nav, footer — keep readable text
+  const clean = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 5000); // cap for token budget
+
+  if (clean.length < 100) throw new Error("Halaman tidak bisa dibaca atau kosong");
+
+  // Use AI to extract key insights
+  const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      max_tokens: 600,
+      messages: [{
+        role: "user",
+        content:
+          `Extract 3-5 specific, interesting insights or learnings from this article. ` +
+          `Focus on: surprising facts, practical lessons, controversial takes, or things most developers don't know. ` +
+          `Be concise and specific. Format as bullet points starting with •.\n\n` +
+          `URL: ${url}\n\nContent:\n${clean}`,
+      }],
+    }),
+  });
+
+  if (!aiRes.ok) throw new Error(`OpenAI error: ${aiRes.status}`);
+  const data = await aiRes.json();
+  return data.choices[0].message.content.trim();
 }
 
 // ─── KV Helpers ────────────────────────────────────────────────────────────

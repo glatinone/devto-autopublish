@@ -105,9 +105,15 @@ try {
   console.log(`dev.to URL: ${result.url}`);
   console.log(`dev.to ID:  ${result.id}`);
 
+  // Auto-backfill devto_id into the frontmatter file so future pushes update instead of duplicate
   if (!isUpdate) {
-    console.log(`\nIMPORTANT: Add this to your frontmatter to enable future updates:`);
-    console.log(`devto_id: ${result.id}`);
+    const updated = raw
+      .replace(/^#\s*devto_id:.*$/m, `devto_id: ${result.id}`)   // replace comment placeholder
+      .replace(/^devto_id:.*$/m, `devto_id: ${result.id}`);       // or replace existing value
+    if (updated !== raw) {
+      fs.writeFileSync(absolutePath, updated, "utf8");
+      console.log(`✅ devto_id ${result.id} written back to ${filePath}`);
+    }
   }
 } catch (err) {
   console.error("NETWORK ERROR:", err.message);
