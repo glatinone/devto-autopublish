@@ -3,7 +3,7 @@ title: "I Tidied Up Hundreds of Open Tabs with Notion Web Clipper — Here's Wha
 published: false
 tags: webdev, javascript, devops, productivity
 description: "Discover how I streamlined my workflow using Notion Web Clipper and the lessons learned along the way."
-# devto_id: (filled after first publish)
+devto_id: 3615984
 ---
 
 It felt overwhelming—hundreds of tabs were open across my browser, each representing a piece of information I once deemed crucial. I had become a digital hoarder, accumulating resources with no plan to revisit them. It was time to act, and that’s when I stumbled upon Notion Web Clipper.
