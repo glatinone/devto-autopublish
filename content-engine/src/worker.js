@@ -130,10 +130,98 @@ async function handleTelegram(body, env) {
     return;
   }
 
-  // /clear — clear idea inbox
-  if (text === "/clear") {
-    await clearIdeas(env);
-    await sendTelegram("🗑️ Idea inbox cleared.", env);
+  // /clear — selective or full clear
+  if (text.startsWith("/clear")) {
+    const arg = text.replace("/clear", "").trim();
+    const ideas = await getIdeas(env);
+
+    // /clear (no arg) → show options
+    if (!arg) {
+      if (ideas.length === 0) {
+        await sendTelegram("📭 Inbox sudah kosong.", env);
+        return;
+      }
+      const list = ideas.map((idea, i) => `${i + 1}. ${idea.slice(0, 80)}${idea.length > 80 ? "…" : ""}`).join("\n");
+      await sendTelegram(
+        `🗑️ *Mau hapus yang mana?*\n\n${list}\n\n` +
+        `Ketik:\n` +
+        `/clear all — hapus semua\n` +
+        `/clear 2 — hapus nomor 2\n` +
+        `/clear 1 3 5 — hapus beberapa sekaligus`,
+        env
+      );
+      return;
+    }
+
+    // /clear all
+    if (arg === "all") {
+      const count = ideas.length;
+      await clearIdeas(env);
+      await sendTelegram(`🗑️ ${count} ide dihapus semua.`, env);
+      return;
+    }
+
+    // /clear 1 3 5 (specific numbers)
+    const nums = arg.split(/\s+/).map(n => parseInt(n)).filter(n => !isNaN(n) && n >= 1 && n <= ideas.length);
+    if (nums.length === 0) {
+      await sendTelegram(`⚠️ Nomor tidak valid. Ketik /clear untuk lihat daftar.`, env);
+      return;
+    }
+    const toDelete = new Set(nums.map(n => n - 1)); // convert to 0-based index
+    const remaining = ideas.filter((_, i) => !toDelete.has(i));
+    await env.IDEAS_KV.put("ideas", JSON.stringify(remaining));
+    const deleted = ideas.filter((_, i) => toDelete.has(i));
+    await sendTelegram(
+      `🗑️ *${deleted.length} ide dihapus:*\n\n` +
+      deleted.map((d, i) => `- ${d.slice(0, 80)}${d.length > 80 ? "…" : ""}`).join("\n") +
+      `\n\n💡 Sisa: *${remaining.length} ide*`,
+      env
+    );
+    return;
+  }
+
+  // /trending — show what's hot in your niche right now
+  if (text === "/trending") {
+    await sendTelegram("📈 Fetching trending articles...", env);
+    const trending = await getTrendingTopics();
+    if (trending.length === 0) {
+      await sendTelegram("❌ Gagal fetch trending. Coba lagi.", env);
+      return;
+    }
+    const list = trending
+      .map((t, i) => `${i + 1}. *${t.title}*\n   [${t.tag}] ❤️ ${t.reactions} · 💬 ${t.comments}`)
+      .join("\n\n");
+    await sendTelegram(
+      `📈 *Trending di niche kamu sekarang:*\n\n${list}\n\n` +
+      `_Kirim ide kamu, atau /generate [topik] untuk nulis dari salah satu angle ini._`,
+      env
+    );
+    return;
+  }
+
+  // /prompt — show the article generation formula being used
+  if (text === "/prompt") {
+    await sendTelegram(
+      `🧠 *Formula artikel yang dipakai AI:*\n\n` +
+      `*TITLE:*\n` +
+      `• "I [did X] for [time] — here's what I found"\n` +
+      `• "The [X] nobody tells you about [topic]"\n` +
+      `• "Stop [X]. Do [Y] instead."\n` +
+      `• "I thought I understood [X]. Then [thing] happened."\n\n` +
+      `*STRUCTURE:*\n` +
+      `1. Hook — mulai dari scene nyata, bukan intro generic\n` +
+      `2. Setup — konteks & stakes\n` +
+      `3. Masalah/Challenge — kode jelek/buggy yang relatable\n` +
+      `4. Breakthrough — solusi + kode bersih\n` +
+      `5. Deeper Insight — prinsip yang lebih besar\n` +
+      `6. What I'd Do Differently — actionable lessons\n` +
+      `7. Closing Question — drive comments\n\n` +
+      `*INPUT PRIORITY:*\n` +
+      `1. Ide kamu di inbox (paling personal)\n` +
+      `2. Trending topics (untuk SEO angle)\n\n` +
+      `_Makin banyak ide personal yang kamu kirim, makin authentic artikelnya._`,
+      env
+    );
     return;
   }
 
@@ -150,12 +238,15 @@ async function handleTelegram(body, env) {
     await sendTelegram(
       `🟢 *Content Engine Status*\n\n` +
       `💡 Ideas in inbox: *${ideas.length}*\n` +
-      `🕐 Next run: Weekdays 09:00 WIB\n` +
-      `📋 Commands:\n` +
+      `🕐 Next run: Weekdays 09:00 WIB\n\n` +
+      `📋 *Commands:*\n` +
       `/generate [topik] — generate sekarang\n` +
       `/ideas — lihat ide tersimpan\n` +
-      `/clear — hapus semua ide\n` +
-      `/digest — stats artikel kamu\n\n` +
+      `/clear — hapus ide (pilih nomor/semua)\n` +
+      `/trending — lihat topik hot di niche kamu\n` +
+      `/prompt — lihat formula artikel AI\n` +
+      `/digest — stats artikel kamu\n` +
+      `/status — status ini\n\n` +
       `_Kirim pesan biasa untuk simpan ide._`,
       env
     );
