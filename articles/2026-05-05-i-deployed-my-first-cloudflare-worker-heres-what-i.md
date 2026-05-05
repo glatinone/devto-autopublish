@@ -3,7 +3,7 @@ title: "I Deployed My First Cloudflare Worker — Here's What I Learned"
 published: false
 tags: cloudflare, webdev, devops, javascript
 description: "Navigating secret handling and learning through my first Cloudflare worker deployment."
-# devto_id: (filled after first publish)
+devto_id: 3615974
 ---
 
 I sat there staring at the screen, my heart racing as I clicked 'deploy' on my first Cloudflare Worker. What should have been a straightforward process felt like a rollercoaster of confusion and excitement. Just moments before, I'd lined everything up: my code looked good, my environment seemed solid—how could anything go wrong?
