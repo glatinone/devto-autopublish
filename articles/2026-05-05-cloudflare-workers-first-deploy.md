@@ -2,6 +2,7 @@
 title: I Shipped My First Cloudflare Worker via GitHub Actions in 47 Minutes (3 Were Wasted on the Wrong API Token)
 published: false
 tags: cloudflare, github, devops, beginners
+devto_id: 3612154
 ---
 
 My first Cloudflare Worker deployed in 47 minutes. Three of those were spent staring at this exact error in a red GitHub Actions log: `Authentication error [code: 10000]`. I had the API token. I had the account ID. I had copy-pasted the workflow from the official docs. It still failed.
