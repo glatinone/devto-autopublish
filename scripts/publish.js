@@ -55,12 +55,17 @@ if (Array.isArray(frontmatter.tags)) {
   tags = frontmatter.tags.split(",").map((t) => t.trim().toLowerCase().replace(/\s+/g, ""));
 }
 
-// Build the article payload
+// Build the article payload.
+// On UPDATE (devto_id exists): never touch published status — let dev.to dashboard control it.
+// On CREATE (new article): always start as draft (published: false) regardless of frontmatter.
+const isUpdate = !!frontmatter.devto_id;
+
 const articlePayload = {
   article: {
     title: frontmatter.title,
     body_markdown: content,
-    published: frontmatter.published === true,
+    // CREATE → always draft. UPDATE → omit published so dashboard setting is preserved.
+    ...(!isUpdate && { published: false }),
     tags,
     ...(frontmatter.description && { description: frontmatter.description }),
     ...(frontmatter.cover_image && { main_image: frontmatter.cover_image }),
@@ -68,7 +73,6 @@ const articlePayload = {
   },
 };
 
-const isUpdate = !!frontmatter.devto_id;
 const method = isUpdate ? "PUT" : "POST";
 const url = isUpdate
   ? `${BASE_URL}/articles/${frontmatter.devto_id}`
@@ -76,7 +80,7 @@ const url = isUpdate
 
 console.log(`${isUpdate ? "UPDATING" : "CREATING"} article: "${frontmatter.title}"`);
 console.log(`File: ${filePath}`);
-console.log(`Published: ${articlePayload.article.published}`);
+console.log(isUpdate ? `Published: controlled by dev.to dashboard` : `Published: false (draft)`);
 console.log(`Tags: ${tags.join(", ")}`);
 
 try {
