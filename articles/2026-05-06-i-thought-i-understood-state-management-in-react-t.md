@@ -3,7 +3,7 @@ title: "I Thought I Understood State Management in React. Then a Memory Leak Hap
 published: false
 tags: webdev,javascript,devops,github
 description: "Lessons learned tackling state management in React and how to avoid memory leaks."
-# devto_id: (filled after first publish)
+devto_id: 3617877
 ---
 
 I was deep in debugging a React application one lazy afternoon, staring at the console as error after error cropped up. I had implemented a pretty standard state management pattern to ensure that my component re-renders whenever specific data changed. But somehow, things were behaving strangely. Components were unmounting; states weren’t resetting; everything felt like a mess despite my confidence. What I thought was a straightforward approach was crumbling right in front of my eyes. 
