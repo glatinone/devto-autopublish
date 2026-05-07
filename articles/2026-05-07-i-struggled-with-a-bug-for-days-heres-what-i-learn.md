@@ -3,7 +3,7 @@ title: "I Struggled with a Bug for Days — Here's What I Learned About Clean Co
 published: false
 tags: webdev, javascript, devops, github
 description: "A frustrating bug led to a bigger understanding of code quality. Here's my real journey."
-# devto_id: (filled after first publish)
+devto_id: 3623707
 ---
 
 As I sat in front of my computer screen one humid evening in Batam, covered with the shadows of unfinished projects, I felt a sinking frustration deep in my chest. For days, I was plagued by a bug in a JavaScript function that seemed to mock me, with every test yielding inconsistent results. I was convinced I had a handle on clean code principles, but the hours spent chasing this elusive problem made me question everything I knew.
