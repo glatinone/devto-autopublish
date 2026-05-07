@@ -359,19 +359,24 @@ async function planSeries(topic, env) {
       messages: [{
         role: "user",
         content:
-          `You are planning a dev.to article series for a developer from Indonesia.\n\n` +
+          `You are planning a dev.to article series for a developer from Batam, Indonesia.\n\n` +
           `Topic: "${topic}"\n\n` +
-          `Plan a series of exactly 5 articles that:\n` +
-          `- Build on each other logically (beginner → advanced)\n` +
+          `Plan exactly 5 articles that:\n` +
+          `- Build logically (practical start, real problems in the middle, advanced insight at the end)\n` +
           `- Each stands alone (readable without the others)\n` +
-          `- Titles follow top dev.to patterns (specific, curiosity-driven)\n` +
-          `- Each covers a distinct sub-topic\n\n` +
+          `- Each covers a distinct sub-topic with a specific outcome\n\n` +
+          `TITLE RULES (important):\n` +
+          `- Format for each article: "Series Name, Part N: [Specific outcome or turning point]"\n` +
+          `- No em dashes (—) in any title. Use periods or colons.\n` +
+          `- No "Introduction to" / "Getting Started with" / "A Comprehensive Guide"\n` +
+          `- Include a specific result, number, or tension in each title\n` +
+          `- Example good title: "Cloudflare Workers, Part 2: Why My Deploy Broke at 2 AM (And How I Fixed It)"\n\n` +
           `Respond ONLY as JSON:\n` +
           `{\n` +
-          `  "title": "Series name (short, punchy)",\n` +
+          `  "title": "Series name (short, 2-4 words)",\n` +
           `  "topic": "${topic}",\n` +
           `  "articles": [\n` +
-          `    { "title": "...", "description": "...(what this part covers, 1 sentence)", "focus": "...(key technical concept)" },\n` +
+          `    { "title": "...", "description": "...(what this part covers, 1 sentence, plain language)", "focus": "...(key technical concept)" },\n` +
           `    ...\n` +
           `  ]\n` +
           `}`,
@@ -400,23 +405,36 @@ async function generateSeriesArticle(seriesArticle, series, trending, ideas, env
     ? `\nWriter's personal ideas/experiences to weave in:\n${ideas.map((idea, i) => `${i + 1}. ${idea}`).join("\n")}`
     : "";
 
+  const isLastPart = series.currentIndex + 1 >= series.articles.length;
   const prompt =
-    `You are ghostwriting Part ${series.currentIndex + 1} of a dev.to series for a developer from Batam, Indonesia.\n\n` +
+    `You are ghostwriting Part ${series.currentIndex + 1} of ${series.articles.length} of a dev.to article series for a developer from Batam, Indonesia.\n\n` +
     `SERIES: "${series.title}"\n` +
     `THIS PART: "${seriesArticle.title}"\n` +
     `FOCUS: ${seriesArticle.focus}\n\n` +
-    (prevParts ? `PREVIOUS PARTS (briefly reference to maintain continuity):\n${prevParts}\n\n` : "") +
+    (prevParts ? `PREVIOUS PARTS (reference naturally for continuity, don't recap them heavily):\n${prevParts}\n\n` : "") +
     ideasContext + "\n\n" +
     `TRENDING CONTEXT:\n${trendingContext}\n\n` +
-    `RULES:\n` +
-    `- Minimum 900 words\n` +
-    `- Include the series name in the article naturally\n` +
-    `- At least 2 runnable code blocks\n` +
-    `- First-person, honest voice, real examples\n` +
-    `- End with a teaser for next part (if not the last)\n` +
-    `- Tags: exactly 4 from: ${NICHE_TAGS.join(", ")}\n\n` +
-    `Respond ONLY as JSON:\n` +
-    `{ "title": "...", "description": "...(max 140 chars)", "tags": "t1, t2, t3, t4", "body": "...(full article)" }`;
+    `━━━ TITLE FORMULA ━━━\n` +
+    `Format: "Series Name, Part N: [Specific outcome or turning point]"\n` +
+    `Use a colon after the part number. No em dashes.\n\n` +
+    `━━━ BANNED (AI tells - never use) ━━━\n` +
+    `- Em dashes (—) anywhere. Use commas, colons, periods, or parentheses.\n` +
+    `- "Let's dive in" / "In this article" / "In this part we will" / "Without further ado"\n` +
+    `- "crucial" / "robust" / "seamless" / "leverage" / "game-changer"\n` +
+    `- Three-item adjective stacks ("fast, reliable, scalable")\n` +
+    `- "It's not just X, it's Y" constructions\n` +
+    `- Generic positive endings\n` +
+    `- Bullet-point body. Write prose.\n\n` +
+    `━━━ STYLE ━━━\n` +
+    `- First person. Use contractions (I'll, don't, wasn't).\n` +
+    `- Vary sentence length. Short punchy ones mixed with longer ones.\n` +
+    `- Specific numbers over vague claims.\n` +
+    `- Start with a mid-scene hook. No "Welcome back to part N of..."\n` +
+    (isLastPart
+      ? `- This is the LAST part. End with a strong conclusion and a real debate question.\n`
+      : `- End with a natural teaser for Part ${series.currentIndex + 2} (one sentence, not a cliffhanger cliche).\n`) +
+    `\nRULES: minimum 900 words · 2+ real working code blocks · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]\n\n` +
+    `JSON only: { "title": "...", "description": "...(max 140 chars)", "tags": "t1, t2, t3, t4", "body": "...(full article in markdown)" }`;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -427,6 +445,7 @@ async function generateSeriesArticle(seriesArticle, series, trending, ideas, env
   const data = await res.json();
   const parsed = JSON.parse(data.choices[0].message.content);
   parsed.series = series.title; // add series name for frontmatter
+  parsed.body = await humanizeArticle(parsed.body, env);
   return parsed;
 }
 
@@ -634,28 +653,49 @@ async function getTrendingTopics() {
 // ─── Generate Article ──────────────────────────────────────────────────────
 
 async function generateArticle(trending, ideas, env) {
-  const trendingContext = trending.map(t => `- "${t.title}" [${t.tag}] — ${t.reactions} reactions, ${t.comments} comments`).join("\n");
+  const trendingContext = trending.map(t => `- "${t.title}" [${t.tag}] - ${t.reactions} reactions, ${t.comments} comments`).join("\n");
   const ideasContext    = ideas.length > 0
-    ? `\nWRITER'S OWN EXPERIENCES & IDEAS (use as the soul of the article):\n${ideas.map((idea, i) => `${i + 1}. ${idea}`).join("\n")}`
+    ? `\nWRITER'S OWN EXPERIENCES & IDEAS (these are the soul of the article - weave them in as real stories):\n${ideas.map((idea, i) => `${i + 1}. ${idea}`).join("\n")}`
     : "";
 
   const prompt =
-    `You are ghostwriting for a developer from Batam, Indonesia on dev.to.\n` +
-    `Voice: honest, first-person, shares real mistakes & wins.\n` +
+    `You are ghostwriting a dev.to article for a developer from Batam, Indonesia.\n` +
+    `First person. Honest. Real mistakes. Real wins. Specific numbers over vague claims.\n` +
     ideasContext + "\n\n" +
-    `TRENDING:\n${trendingContext}\n\n` +
-    `━━━ FORMULA (top dev.to writers, 500+ reactions) ━━━\n` +
-    `TITLE: "I [X] for [time] — here's what I found" | "The [X] nobody tells you" | "Stop [X]. Do [Y]." | "I thought I understood [X]. Then [Y] happened."\n\n` +
-    `STRUCTURE:\n` +
-    `1. HOOK (2-3 sentences, no "In this article") — start mid-scene\n` +
-    `2. SETUP — context & stakes\n` +
-    `3. CHALLENGE (## heading) — buggy/messy code, real error\n` +
-    `4. BREAKTHROUGH (## heading) — fix + clean code + WHY\n` +
-    `5. DEEPER INSIGHT — the bigger principle\n` +
-    `6. WHAT I'D DO DIFFERENTLY — actionable bullets\n` +
-    `7. CLOSING QUESTION — specific, invites debate\n\n` +
-    `RULES: min 1000 words · 2+ code blocks · no "Conclusion" heading · no vague advice · tags: 4 from [${NICHE_TAGS.join(", ")}]\n\n` +
-    `JSON only: { "title":"...", "description":"...(max 140 chars)", "tags":"t1,t2,t3,t4", "body":"...(full article)" }`;
+    `TRENDING RIGHT NOW:\n${trendingContext}\n\n` +
+    `━━━ TITLE FORMULA (pick the one that fits best) ━━━\n` +
+    `- "I [X] for [N] Days. [Specific thing] Changed on Day [N]." (use period not dash)\n` +
+    `- "[Tool] Burned [specific number]. Here's the Habit That Prevents It."\n` +
+    `- "Stop [X]. [Specific alternative] Does the Same Thing Faster."\n` +
+    `- "I Was Wrong About [X]. Here Is the Moment That Changed It."\n` +
+    `- "[Tool] Only Worked When I Stopped [doing obvious thing]."\n` +
+    `NO em dashes in titles. Use a period or colon to separate two parts.\n\n` +
+    `━━━ STRUCTURE ━━━\n` +
+    `HOOK (first 2-3 sentences): Drop mid-scene. Include a specific time, number, or named thing. Reverse the emotional valence in sentence 2 or 3. No "In this article", no "Have you ever".\n` +
+    `SETUP: Context and what was at stake. One paragraph.\n` +
+    `## [Section heading]: The problem with real error or messy code.\n` +
+    `## [Section heading]: The fix. Real working code. Explain the WHY not just the WHAT.\n` +
+    `## [Section heading]: The bigger principle behind the fix.\n` +
+    `CLOSING (no heading): 1-2 sentences what you'd do differently. Then ONE specific question to drive comments (not "what do you think?" - something with a real stake or debate).\n\n` +
+    `━━━ BANNED (these make it look AI-written, never use them) ━━━\n` +
+    `- Em dashes (—) anywhere in title or body. Use commas, periods, colons, or parentheses instead.\n` +
+    `- "Let's dive in" / "In this article" / "Without further ado" / "In conclusion"\n` +
+    `- "it's worth noting" / "it's important to remember" / "needless to say"\n` +
+    `- "crucial" / "robust" / "seamless" / "leverage" / "game-changer" / "powerful"\n` +
+    `- Three-item adjective stacks: "fast, reliable, and scalable"\n` +
+    `- "It's not just X, it's Y" constructions\n` +
+    `- Generic positive endings: "exciting times ahead" / "the future looks bright"\n` +
+    `- Vague attributions: "many developers" / "experts agree" / "it's widely known"\n` +
+    `- Headers followed immediately by a one-line restatement before real content\n\n` +
+    `━━━ STYLE ━━━\n` +
+    `- Use contractions (I'll, don't, can't, wasn't)\n` +
+    `- Vary sentence length. Short punchy ones. Then longer ones that give context and let an idea breathe.\n` +
+    `- Occasional parenthetical aside as an aside (like this)\n` +
+    `- Self-deprecating humor is fine in one place\n` +
+    `- If you mention cost or metrics, use exact numbers ($0.42, 9 days, 47 tests)\n` +
+    `- Body is PROSE, not bullet lists. Bullets only for a 2-3 item action list max.\n\n` +
+    `RULES: minimum 1000 words · 2+ real working code blocks · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]\n\n` +
+    `JSON only: { "title":"...", "description":"...(max 140 chars)", "tags":"t1,t2,t3,t4", "body":"...(full article in markdown)" }`;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method : "POST",
@@ -663,7 +703,56 @@ async function generateArticle(trending, ideas, env) {
     body   : JSON.stringify({ model: "gpt-4o-mini", max_tokens: 8192, response_format: { type: "json_object" }, messages: [{ role: "user", content: prompt }] }),
   });
   if (!res.ok) throw new Error(`OpenAI error ${res.status}: ${await res.text()}`);
-  return JSON.parse((await res.json()).choices[0].message.content.trim());
+  const parsed = JSON.parse((await res.json()).choices[0].message.content.trim());
+  parsed.body = await humanizeArticle(parsed.body, env);
+  return parsed;
+}
+
+// ─── Humanizer Pass ────────────────────────────────────────────────────────
+
+async function humanizeArticle(body, env) {
+  const prompt =
+    `You are a copy editor. Fix this dev.to article draft to remove all AI writing tells.\n\n` +
+    `FIND AND FIX EVERY INSTANCE OF:\n` +
+    `1. Em dashes (—) → replace with a comma, period, colon, or parentheses depending on context\n` +
+    `2. "Let's dive in" / "In this article" / "In conclusion" / "Without further ado" / "Let me explain" → delete or rewrite the sentence\n` +
+    `3. "crucial" / "robust" / "seamless" / "leverage" / "game-changer" / "powerful" / "cutting-edge" → use plain, specific language\n` +
+    `4. Three-item adjective stacks ("fast, reliable, and scalable") → cut to one or two\n` +
+    `5. "It's not just X, it's Y" / "Not merely X, but Y" → just say what it is\n` +
+    `6. "it's worth noting" / "it's important to remember" / "needless to say" → delete these phrases\n` +
+    `7. "Many developers" / "experts agree" / "it's widely known" → either cite something real or use "I think"\n` +
+    `8. Generic positive endings ("exciting times ahead" / "the future is bright") → replace with a real takeaway or question\n` +
+    `9. Symmetric bullet lists where every item has the same rhythm → convert to prose or break the pattern\n` +
+    `10. H2 headers followed by a one-line restatement → delete the restatement, go straight to content\n\n` +
+    `ALSO:\n` +
+    `- Add contractions where they sound natural (I will → I'll, do not → don't, it is → it's)\n` +
+    `- Break up any paragraph of 5+ sentences into two. Vary sentence length.\n` +
+    `- If any number is vague ("a few", "some", "a couple"), leave it. Only replace if you have a real number from context.\n\n` +
+    `DO NOT:\n` +
+    `- Change the technical content, code blocks, or any factual claims\n` +
+    `- Add new content\n` +
+    `- Change headings unless they contain a banned phrase\n` +
+    `- Change the structure of the article\n\n` +
+    `Return ONLY the corrected article body in markdown. No JSON wrapper. No explanation.\n\n` +
+    `ARTICLE:\n${body}`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method : "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+      body   : JSON.stringify({ model: "gpt-4o-mini", max_tokens: 8192, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!res.ok) {
+      console.warn("Humanizer pass failed, using original body:", res.status);
+      return body; // graceful fallback
+    }
+    const result = (await res.json()).choices[0].message.content.trim();
+    console.log("✅ Humanizer pass complete");
+    return result;
+  } catch (err) {
+    console.warn("Humanizer pass error, using original body:", err.message);
+    return body;
+  }
 }
 
 // ─── Commit to Main ────────────────────────────────────────────────────────
