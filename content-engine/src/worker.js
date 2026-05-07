@@ -76,19 +76,8 @@ async function runPipeline(env, forceTopic = null) {
   }
 
   console.log(`✍️  Generated: "${article.title}"`);
-  await commitToMain(article, env);
-  console.log("✅ Committed to main");
-
-  await sendTelegram(
-    `📝 *New draft is live on dev.to!*\n\n` +
-    `*Title:* ${article.title}\n` +
-    `*Tags:* \`${article.tags}\`\n\n` +
-    `👉 [Review & Publish](https://dev.to/dashboard)\n\n` +
-    context,
-    env
-  );
-
-  console.log("✅ Pipeline finished");
+  await offerHookSelection(article, context, env);
+  console.log("✅ Pipeline finished — waiting for /hook selection");
 }
 
 // ─── Telegram Handler ──────────────────────────────────────────────────────
@@ -125,6 +114,27 @@ async function handleTelegram(body, env) {
     }
     await sendTelegram("📤 Posting ke LinkedIn...", env);
     await postToLinkedIn(articleUrl, env);
+    return;
+  }
+
+  // /hook [1|2|3] — pick hook variant and commit pending draft
+  if (text.startsWith("/hook")) {
+    await handleHookSelection(text, env);
+    return;
+  }
+
+  // /revise [devto_url] — AI-improve a published article based on comments
+  if (text.startsWith("/revise")) {
+    const url = text.replace("/revise", "").trim();
+    if (!url) {
+      await sendTelegram(
+        `✏️ *Revise Artikel*\n\nUsage:\n/revise https://dev.to/username/judul-artikel\n\n_AI akan baca artikel + komentar kamu, lalu generate versi revisi yang lebih baik._`,
+        env
+      );
+      return;
+    }
+    await sendTelegram(`✏️ Fetching artikel + komentar...\n_${url.slice(0, 60)}_`, env);
+    await reviseArticle(url, env);
     return;
   }
 
@@ -219,18 +229,25 @@ async function handleTelegram(body, env) {
   if (text === "/status") {
     const ideas        = await getIdeas(env);
     const activeSeries = await getActiveSeries(env);
+    const pendingDraft = await env.IDEAS_KV.get("draft:pending");
     const seriesInfo   = activeSeries
       ? `📚 Active series: *${activeSeries.title}*\n   Part ${activeSeries.currentIndex + 1}/${activeSeries.articles.length} next\n`
       : `📚 No active series\n`;
+    const draftInfo = pendingDraft
+      ? `\n⏳ *Draft menunggu hook:* ketik /hook untuk lihat opsi\n`
+      : "";
     await sendTelegram(
       `🟢 *Content Engine*\n\n` +
       `${seriesInfo}` +
       `💡 Ideas in inbox: *${ideas.length}*\n` +
-      `🕐 Cron: Weekdays 09:00 WIB\n\n` +
+      `🕐 Cron: Weekdays 09:00 WIB` +
+      draftInfo + `\n\n` +
       `*Commands:*\n` +
       `/series [topik] — plan series\n` +
       `/suggest — rekomendasi topik berdasarkan data\n` +
       `/linkedin [url] — post ke LinkedIn\n` +
+      `/revise [url] — improve artikel berdasarkan komentar\n` +
+      `/hook — lihat opsi hook untuk draft pending\n` +
       `/generate [topik] — generate sekarang\n` +
       `/ideas · /clear · /trending · /prompt · /digest`,
       env
@@ -634,6 +651,244 @@ async function suggestTopics(env) {
   );
 }
 
+// ─── Hook A/B Selection ────────────────────────────────────────────────────
+
+async function offerHookSelection(article, pipelineContext, env) {
+  await sendTelegram(`✍️ *"${article.title}"*\n\n_Generating 3 hook variants..._`, env);
+
+  const hooks = await generateHookVariants(article, env);
+
+  // Store the full draft + hooks in KV (expire after 48h)
+  await env.IDEAS_KV.put(
+    "draft:pending",
+    JSON.stringify({ article, hooks, context: pipelineContext }),
+    { expirationTtl: 60 * 60 * 48 }
+  );
+
+  const hookPreviews = hooks
+    .map((h, i) => `*Hook ${i + 1}:*\n${h.slice(0, 220)}${h.length > 220 ? "…" : ""}`)
+    .join("\n\n─────────────────\n\n");
+
+  await sendTelegram(
+    `🎣 *Pilih opening untuk artikel ini:*\n\n` +
+    hookPreviews + `\n\n` +
+    `─────────────────\n` +
+    `Reply:\n` +
+    `/hook 1 · /hook 2 · /hook 3\n\n` +
+    `_Draft akan commit ke GitHub setelah kamu pilih._`,
+    env
+  );
+}
+
+async function generateHookVariants(article, env) {
+  // Extract everything before the first ## heading as the current hook
+  const bodyBeforeFirstSection = article.body.split(/\n## /)[0].trim();
+
+  const prompt =
+    `You are writing 3 alternative opening hooks for a dev.to article.\n\n` +
+    `ARTICLE TITLE: "${article.title}"\n` +
+    `CURRENT OPENING:\n${bodyBeforeFirstSection.slice(0, 600)}\n\n` +
+    `Write 3 very different 2-3 sentence hooks using these 3 patterns:\n\n` +
+    `HOOK 1 — Specific Moment + Reversal:\n` +
+    `Drop mid-scene with a real time/number. Sentence 2 is the emotional peak. Sentence 3 reverses it.\n` +
+    `Example: "My deploy finished at 11:47 PM on a Wednesday. I felt like a genius. By Thursday morning, three users had emailed me about a 500 error I'd introduced."\n\n` +
+    `HOOK 2 — Near-Failure:\n` +
+    `Open at the point of almost giving up. Include the specific bad output or error in quotes if possible. End with dry humor or self-deprecation.\n` +
+    `Example: "For two days I almost deleted the whole project. The error message just said: 'Unexpected token.' No line number. No file. Just vibes."\n\n` +
+    `HOOK 3 — Caught Something:\n` +
+    `Start with what the tool/technique found or revealed. Honest reaction. One sentence on why that matters.\n` +
+    `Example: "The profiler showed one function using 94% of CPU. It was a function I'd written three years ago and completely forgotten about. That's the article."\n\n` +
+    `RULES for all hooks:\n` +
+    `- No em dashes (—). Use commas, periods, or colons.\n` +
+    `- No "In this article", "Let's dive in", "Have you ever"\n` +
+    `- First person. Specific over generic.\n` +
+    `- 2-3 sentences max each.\n\n` +
+    `Respond ONLY as JSON: { "hooks": ["hook1 text", "hook2 text", "hook3 text"] }`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method : "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+      body   : JSON.stringify({ model: "gpt-4o-mini", max_tokens: 800, response_format: { type: "json_object" }, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!res.ok) throw new Error(`OpenAI error: ${res.status}`);
+    const data = JSON.parse((await res.json()).choices[0].message.content);
+    return data.hooks;
+  } catch (err) {
+    console.warn("Hook generation failed, using original body start:", err.message);
+    // Fallback: slice 3 similar hooks from the original body
+    const orig = article.body.split(/\n## /)[0].trim();
+    return [orig, orig, orig];
+  }
+}
+
+async function handleHookSelection(text, env) {
+  const raw = await env.IDEAS_KV.get("draft:pending");
+  if (!raw) {
+    await sendTelegram("⚠️ Tidak ada draft yang menunggu. Jalankan /generate dulu.", env);
+    return;
+  }
+
+  const { article, hooks, context } = JSON.parse(raw);
+  const arg = text.replace("/hook", "").trim();
+
+  // /hook (no number) → show options again
+  if (!arg) {
+    const hookPreviews = hooks
+      .map((h, i) => `*Hook ${i + 1}:*\n${h.slice(0, 220)}${h.length > 220 ? "…" : ""}`)
+      .join("\n\n─────────────────\n\n");
+    await sendTelegram(
+      `🎣 *Draft: "${article.title}"*\n\n` +
+      hookPreviews + `\n\n─────────────────\n` +
+      `/hook 1 · /hook 2 · /hook 3`,
+      env
+    );
+    return;
+  }
+
+  const choice = parseInt(arg);
+  if (isNaN(choice) || choice < 1 || choice > 3) {
+    await sendTelegram("⚠️ Ketik /hook 1, /hook 2, atau /hook 3", env);
+    return;
+  }
+
+  const chosenHook = hooks[choice - 1];
+
+  // Replace the opening of the body (everything before first ## heading) with chosen hook
+  const sections  = article.body.split(/(\n## )/);
+  const restOfArticle = sections.length > 1
+    ? sections.slice(1).join("")         // everything from first ## onward (with separator)
+    : article.body;                       // no ## found, keep body as-is
+
+  article.body = sections.length > 1
+    ? chosenHook + "\n\n## " + restOfArticle
+    : chosenHook + "\n\n" + restOfArticle;
+
+  await sendTelegram(`✅ Hook ${choice} dipilih. Committing ke GitHub...`, env);
+
+  try {
+    await commitToMain(article, env);
+    await env.IDEAS_KV.delete("draft:pending");
+    await sendTelegram(
+      `📝 *Draft live di dev.to!*\n\n` +
+      `*Title:* ${article.title}\n` +
+      `*Tags:* \`${article.tags}\`\n\n` +
+      `👉 [Review & Publish](https://dev.to/dashboard)\n\n` +
+      context,
+      env
+    );
+  } catch (err) {
+    await sendTelegram(`❌ Gagal commit: ${err.message}`, env);
+  }
+}
+
+// ─── Revise Article ────────────────────────────────────────────────────────
+
+async function reviseArticle(articleUrl, env) {
+  const username = env.DEVTO_USERNAME;
+
+  // Parse slug from URL: https://dev.to/username/slug or /username/slug
+  const urlParts = articleUrl.replace(/^https?:\/\/dev\.to\//, "").split("/");
+  const articleUsername = urlParts[0];
+  const slug            = urlParts[1];
+
+  if (!articleUsername || !slug) {
+    await sendTelegram("❌ URL tidak valid. Format: https://dev.to/username/article-slug", env);
+    return;
+  }
+
+  // Fetch article
+  const articleRes = await fetch(`https://dev.to/api/articles/${articleUsername}/${slug}`, {
+    headers: { "User-Agent": "content-engine/1.0" },
+  });
+  if (!articleRes.ok) {
+    await sendTelegram(`❌ Artikel tidak ditemukan (${articleRes.status}). Cek URL-nya.`, env);
+    return;
+  }
+  const articleData = await articleRes.json();
+
+  // Fetch comments
+  const commentsRes = await fetch(`https://dev.to/api/comments?a_id=${articleData.id}&per_page=50`, {
+    headers: { "User-Agent": "content-engine/1.0" },
+  });
+  const commentsData = commentsRes.ok ? await commentsRes.json() : [];
+
+  // Build comment context (top-level only, trim long ones)
+  const commentContext = commentsData.length > 0
+    ? commentsData
+        .filter(c => !c.parent_id) // top-level only
+        .slice(0, 10)
+        .map(c => `- "${c.body_html.replace(/<[^>]+>/g, " ").trim().slice(0, 200)}"`)
+        .join("\n")
+    : "No comments yet.";
+
+  await sendTelegram(
+    `📊 Artikel: *${articleData.title}*\n` +
+    `❤️ ${articleData.positive_reactions_count} reactions · 💬 ${commentsData.length} comments\n\n` +
+    `_Generating revisi..._`,
+    env
+  );
+
+  const prompt =
+    `You are revising a dev.to article based on reader feedback and performance data.\n\n` +
+    `ARTICLE TITLE: "${articleData.title}"\n` +
+    `PERFORMANCE: ${articleData.positive_reactions_count} reactions, ${commentsData.length} comments\n\n` +
+    `CURRENT ARTICLE BODY:\n${(articleData.body_markdown || "").slice(0, 5000)}\n\n` +
+    `READER COMMENTS:\n${commentContext}\n\n` +
+    `YOUR JOB:\n` +
+    `1. Identify what readers responded to (what generated comments or questions)\n` +
+    `2. Expand those sections with more depth\n` +
+    `3. Fix anything that confused readers (based on comments)\n` +
+    `4. Improve the hook if it's generic\n` +
+    `5. Strengthen the closing question if it's vague\n\n` +
+    `━━━ BANNED (AI tells) ━━━\n` +
+    `- Em dashes (—) anywhere. Use commas, periods, colons, or parentheses.\n` +
+    `- "Let's dive in" / "In this article" / "In conclusion"\n` +
+    `- "crucial" / "robust" / "seamless" / "leverage" / "game-changer"\n` +
+    `- Generic positive endings\n\n` +
+    `RULES:\n` +
+    `- Keep the same title unless it's genuinely weak\n` +
+    `- Keep all code blocks (you can improve them)\n` +
+    `- Minimum 1000 words\n` +
+    `- First person. Contractions are fine.\n\n` +
+    `Respond ONLY as JSON:\n` +
+    `{\n` +
+    `  "title": "...(same or improved)",\n` +
+    `  "description": "...(max 140 chars)",\n` +
+    `  "tags": "t1,t2,t3,t4",\n` +
+    `  "body": "...(full revised article in markdown)",\n` +
+    `  "changes": "...(2-3 sentences: what you changed and why)"\n` +
+    `}`;
+
+  const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+    method : "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+    body   : JSON.stringify({ model: "gpt-4o-mini", max_tokens: 8192, response_format: { type: "json_object" }, messages: [{ role: "user", content: prompt }] }),
+  });
+
+  if (!aiRes.ok) {
+    await sendTelegram(`❌ OpenAI error: ${aiRes.status}`, env);
+    return;
+  }
+
+  const revised = JSON.parse((await aiRes.json()).choices[0].message.content);
+  revised.body  = await humanizeArticle(revised.body, env);
+
+  // If original article has devto_id tag info, carry it forward
+  if (articleData.id) revised.devto_id = articleData.id;
+
+  await commitToMain(revised, env);
+
+  await sendTelegram(
+    `✏️ *Revisi selesai!*\n\n` +
+    `*Title:* ${revised.title}\n\n` +
+    `*Yang diubah:*\n${revised.changes}\n\n` +
+    `👉 [Review di Dashboard](https://dev.to/dashboard)\n\n` +
+    `_Cek artikel di GitHub, publish kalau sudah OK._`,
+    env
+  );
+}
+
 // ─── Trending Topics ───────────────────────────────────────────────────────
 
 async function getTrendingTopics() {
@@ -768,8 +1023,8 @@ async function commitToMain(article, env) {
     `published: false\n` +
     `tags: ${article.tags}\n` +
     `description: "${(article.description || "").replace(/"/g, '\\"')}"\n` +
-    (article.series ? `series: "${article.series.replace(/"/g, '\\"')}"\n` : "") +
-    `# devto_id: (filled after first publish)\n` +
+    (article.series   ? `series: "${article.series.replace(/"/g, '\\"')}"\n` : "") +
+    (article.devto_id ? `devto_id: ${article.devto_id}\n` : `# devto_id: (filled after first publish)\n`) +
     `---\n\n`;
 
   const encoded = btoa(unescape(encodeURIComponent(frontmatter + article.body)));
