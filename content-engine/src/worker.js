@@ -102,18 +102,9 @@ async function handleTelegram(body, env) {
     return;
   }
 
-  // /linkedin [url] — post article to LinkedIn
+  // /linkedin — approval-based LinkedIn posting
   if (text.startsWith("/linkedin")) {
-    const articleUrl = text.replace("/linkedin", "").trim();
-    if (!articleUrl) {
-      await sendTelegram(
-        `📤 *Post ke LinkedIn*\n\nUsage:\n/linkedin https://dev.to/kamu/judul-artikel\n\n_Jalankan setelah artikel dipublish di dev.to._`,
-        env
-      );
-      return;
-    }
-    await sendTelegram("📤 Posting ke LinkedIn...", env);
-    await postToLinkedIn(articleUrl, env);
+    await handleLinkedIn(text, env);
     return;
   }
 
@@ -471,63 +462,188 @@ async function getActiveSeries(env) {
   return raw ? JSON.parse(raw) : null;
 }
 
-// ─── LinkedIn Auto-post ────────────────────────────────────────────────────
+// ─── LinkedIn Approval Flow ────────────────────────────────────────────────
 
-async function postToLinkedIn(articleUrl, env) {
-  if (!env.LINKEDIN_ACCESS_TOKEN || !env.LINKEDIN_PERSON_ID) {
+async function handleLinkedIn(text, env) {
+  const arg = text.replace("/linkedin", "").trim();
+
+  // /linkedin confirm — publish the pending caption
+  if (arg === "confirm") {
+    const raw = await env.IDEAS_KV.get("linkedin:pending");
+    if (!raw) {
+      await sendTelegram("⚠️ Tidak ada post LinkedIn yang menunggu. Jalankan /linkedin [url] dulu.", env);
+      return;
+    }
+    const { articleInfo, caption } = JSON.parse(raw);
+    await sendTelegram("📤 Posting ke LinkedIn...", env);
+    await publishToLinkedIn(articleInfo, caption, env);
+    await env.IDEAS_KV.delete("linkedin:pending");
+    return;
+  }
+
+  // /linkedin cancel — discard pending
+  if (arg === "cancel") {
+    await env.IDEAS_KV.delete("linkedin:pending");
+    await sendTelegram("🗑️ Draft LinkedIn dibatalkan.", env);
+    return;
+  }
+
+  // /linkedin edit [new caption] — replace caption text
+  if (arg.startsWith("edit ")) {
+    const raw = await env.IDEAS_KV.get("linkedin:pending");
+    if (!raw) {
+      await sendTelegram("⚠️ Tidak ada post LinkedIn yang menunggu. Jalankan /linkedin [url] dulu.", env);
+      return;
+    }
+    const pending     = JSON.parse(raw);
+    pending.caption   = arg.replace("edit ", "").trim();
+    await env.IDEAS_KV.put("linkedin:pending", JSON.stringify(pending), { expirationTtl: 60 * 60 * 48 });
     await sendTelegram(
-      `⚠️ *LinkedIn belum dikonfigurasi.*\n\n` +
-      `Perlu set 2 secrets:\n` +
-      `\`npx wrangler secret put LINKEDIN_ACCESS_TOKEN\`\n` +
-      `\`npx wrangler secret put LINKEDIN_PERSON_ID\`\n\n` +
-      `Cara dapat token:\n` +
-      `1. Buat app di developers.linkedin.com\n` +
-      `2. OAuth dengan scope \`w_member_social\`\n` +
-      `3. PERSON_ID: GET https://api.linkedin.com/v2/me`,
+      `✅ Caption diperbarui!\n\n*Preview:*\n${pending.caption}\n\n` +
+      `/linkedin confirm — post sekarang\n/linkedin cancel — batalkan`,
       env
     );
     return;
   }
 
-  // Fetch article info from dev.to API
-  let articleInfo = { title: articleUrl, description: "", url: articleUrl, tags: [] };
+  // /linkedin (no args) — show pending or usage
+  if (!arg) {
+    const raw = await env.IDEAS_KV.get("linkedin:pending");
+    if (raw) {
+      const { articleInfo, caption } = JSON.parse(raw);
+      await sendTelegram(
+        `📋 *Draft LinkedIn pending:*\n\n${caption}\n\n` +
+        `─────────────────\n` +
+        `/linkedin confirm — post sekarang\n` +
+        `/linkedin edit [teks baru] — ubah caption\n` +
+        `/linkedin cancel — batalkan`,
+        env
+      );
+    } else {
+      await sendTelegram(
+        `📤 *LinkedIn Post*\n\n` +
+        `Usage:\n/linkedin https://dev.to/kamu/judul-artikel\n\n` +
+        `AI akan generate draft caption dulu, kamu review sebelum posting.\n\n` +
+        `Commands:\n` +
+        `/linkedin [url] — buat draft\n` +
+        `/linkedin confirm — post pending draft\n` +
+        `/linkedin edit [teks] — edit caption\n` +
+        `/linkedin cancel — batalkan`,
+        env
+      );
+    }
+    return;
+  }
+
+  // /linkedin [url] — generate caption draft
+  if (!env.LINKEDIN_ACCESS_TOKEN || !env.LINKEDIN_PERSON_ID) {
+    await sendTelegram(
+      `⚠️ *LinkedIn belum dikonfigurasi.*\n\n` +
+      `Set 2 secrets:\n` +
+      `\`npx wrangler secret put LINKEDIN_ACCESS_TOKEN\`\n` +
+      `\`npx wrangler secret put LINKEDIN_PERSON_ID\`\n\n` +
+      `Cara dapat token:\n` +
+      `1. Buat app di developers.linkedin.com\n` +
+      `2. OAuth scope: \`w_member_social\`\n` +
+      `3. PERSON\\_ID: GET https://api.linkedin.com/v2/me`,
+      env
+    );
+    return;
+  }
+
+  await sendTelegram(`✍️ Generating caption draft...\n_${arg.slice(0, 60)}_`, env);
+
+  // Fetch article info from dev.to
+  let articleInfo = { title: arg, description: "", url: arg, tags: [] };
   try {
-    // Try to get article from dev.to API using the slug
-    const slug = articleUrl.split("/").pop();
-    const username = env.DEVTO_USERNAME;
-    if (username && slug) {
-      const apiRes = await fetch(`https://dev.to/api/articles/${username}/${slug}`, {
+    const urlParts        = arg.replace(/^https?:\/\/dev\.to\//, "").split("/");
+    const articleUsername = urlParts[0];
+    const slug            = urlParts[1];
+    if (articleUsername && slug) {
+      const apiRes = await fetch(`https://dev.to/api/articles/${articleUsername}/${slug}`, {
         headers: { "User-Agent": "content-engine/1.0" },
       });
       if (apiRes.ok) {
         const data = await apiRes.json();
-        articleInfo = {
-          title      : data.title,
-          description: data.description || "",
-          url        : data.url,
-          tags       : data.tag_list || [],
-        };
+        articleInfo = { title: data.title, description: data.description || "", url: data.url, tags: data.tag_list || [], reactions: data.positive_reactions_count };
       }
     }
   } catch (_) {}
 
-  const hashtags = articleInfo.tags.length > 0
-    ? "\n\n" + articleInfo.tags.map(t => `#${t.replace(/[^a-zA-Z0-9]/g, "")}`).join(" ")
-    : "";
+  const caption = await generateLinkedInCaption(articleInfo, env);
 
-  const postText =
-    `✍️ Just published on dev.to:\n\n` +
-    `${articleInfo.title}\n\n` +
-    `${articleInfo.description ? articleInfo.description + "\n\n" : ""}` +
-    `👉 ${articleInfo.url}` +
-    hashtags;
+  // Store pending post
+  await env.IDEAS_KV.put(
+    "linkedin:pending",
+    JSON.stringify({ articleInfo, caption }),
+    { expirationTtl: 60 * 60 * 48 }
+  );
 
+  await sendTelegram(
+    `📋 *Draft caption LinkedIn:*\n\n` +
+    `─────────────────\n` +
+    `${caption}\n` +
+    `─────────────────\n\n` +
+    `✅ /linkedin confirm — post sekarang\n` +
+    `✏️ /linkedin edit [teks baru] — ubah caption\n` +
+    `❌ /linkedin cancel — batalkan`,
+    env
+  );
+}
+
+async function generateLinkedInCaption(articleInfo, env) {
+  const hashtags = articleInfo.tags && articleInfo.tags.length > 0
+    ? articleInfo.tags.slice(0, 4).map(t => `#${t.replace(/[^a-zA-Z0-9]/g, "")}`).join(" ")
+    : "#webdev #javascript #cloudflare";
+
+  const prompt =
+    `Write a LinkedIn post caption for a developer sharing their dev.to article.\n\n` +
+    `ARTICLE:\n` +
+    `Title: "${articleInfo.title}"\n` +
+    `Description: "${articleInfo.description}"\n` +
+    `URL: ${articleInfo.url}\n\n` +
+    `WRITER CONTEXT:\n` +
+    `- Developer from Batam, Indonesia. Building in public.\n` +
+    `- Writes about Cloudflare Workers, web development, GitHub automation, DevOps.\n` +
+    `- Tone: direct, honest, not corporate. Shares real mistakes and wins.\n\n` +
+    `CAPTION STRUCTURE:\n` +
+    `Line 1-2: A short punchy observation or lesson from the article (not the title). Max 2 sentences.\n` +
+    `Line 3 (blank line)\n` +
+    `Line 4-6: 2-3 bullet points (using arrows >) of the most concrete takeaways. Specific, not vague.\n` +
+    `Line 7 (blank line)\n` +
+    `Line 8: "Full article:" + the URL\n` +
+    `Line 9 (blank line)\n` +
+    `Line 10: hashtags\n\n` +
+    `RULES:\n` +
+    `- No em dashes (—). Use commas or colons.\n` +
+    `- No "I'm excited to share" / "Thrilled to announce" / "Check this out"\n` +
+    `- No "game-changer" / "leverage" / "robust"\n` +
+    `- First person. Contractions are fine.\n` +
+    `- Max 300 characters before the URL line (LinkedIn algorithm preference)\n` +
+    `- End with these hashtags: ${hashtags}\n\n` +
+    `Return ONLY the caption text. No JSON. No explanation.`;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method : "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
+      body   : JSON.stringify({ model: "gpt-4o-mini", max_tokens: 400, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!res.ok) throw new Error(`OpenAI ${res.status}`);
+    return (await res.json()).choices[0].message.content.trim();
+  } catch (_) {
+    // Fallback caption
+    return `${articleInfo.title}\n\n${articleInfo.description ? articleInfo.description + "\n\n" : ""}Full article: ${articleInfo.url}\n\n${hashtags}`;
+  }
+}
+
+async function publishToLinkedIn(articleInfo, caption, env) {
   const body = {
-    author           : `urn:li:person:${env.LINKEDIN_PERSON_ID}`,
-    lifecycleState   : "PUBLISHED",
-    specificContent  : {
+    author          : `urn:li:person:${env.LINKEDIN_PERSON_ID}`,
+    lifecycleState  : "PUBLISHED",
+    specificContent : {
       "com.linkedin.ugc.ShareContent": {
-        shareCommentary    : { text: postText },
+        shareCommentary    : { text: caption },
         shareMediaCategory : "ARTICLE",
         media              : [{
           status     : "READY",
@@ -543,9 +659,9 @@ async function postToLinkedIn(articleUrl, env) {
   const res = await fetch("https://api.linkedin.com/v2/ugcPosts", {
     method : "POST",
     headers: {
-      "Content-Type" : "application/json",
-      "Authorization": `Bearer ${env.LINKEDIN_ACCESS_TOKEN}`,
-      "X-Restli-Protocol-Version": "2.0.0",
+      "Content-Type"              : "application/json",
+      "Authorization"             : `Bearer ${env.LINKEDIN_ACCESS_TOKEN}`,
+      "X-Restli-Protocol-Version" : "2.0.0",
     },
     body: JSON.stringify(body),
   });
@@ -553,17 +669,15 @@ async function postToLinkedIn(articleUrl, env) {
   if (!res.ok) {
     const err = await res.text();
     if (res.status === 401) {
-      await sendTelegram(`❌ LinkedIn token expired.\n\nRefresh token kamu dan update secret:\n\`npx wrangler secret put LINKEDIN_ACCESS_TOKEN\``, env);
+      await sendTelegram(`❌ LinkedIn token expired.\n\nUpdate:\n\`npx wrangler secret put LINKEDIN_ACCESS_TOKEN\``, env);
     } else {
-      await sendTelegram(`❌ LinkedIn post gagal (${res.status}): ${err.slice(0, 200)}`, env);
+      await sendTelegram(`❌ LinkedIn gagal (${res.status}): ${err.slice(0, 200)}`, env);
     }
     return;
   }
 
   await sendTelegram(
-    `✅ *Posted ke LinkedIn!*\n\n` +
-    `*${articleInfo.title}*\n\n` +
-    `_Artikel kamu sekarang live di dev.to + LinkedIn._`,
+    `✅ *Posted ke LinkedIn!*\n\n*${articleInfo.title}*\n\n_Live di dev.to + LinkedIn._`,
     env
   );
 }
