@@ -1043,15 +1043,22 @@ async function getTrendingTopics() {
 
 async function generateArticle(trending, ideas, env) {
   const trendingContext = trending.map(t => `- "${t.title}" [${t.tag}] - ${t.reactions} reactions, ${t.comments} comments`).join("\n");
-  const ideasContext    = ideas.length > 0
-    ? `\nWRITER'S OWN EXPERIENCES & IDEAS (these are the soul of the article - weave them in as real stories):\n${ideas.map((idea, i) => `${i + 1}. ${idea}`).join("\n")}`
-    : "";
+
+  // Two modes: idea-driven (writer has specific topic) vs trending-driven (AI picks freely)
+  const hasIdeas    = ideas.length > 0;
+  const topicBlock  = hasIdeas
+    ? `━━━ TOPIC (REQUIRED — write about THIS, not trending) ━━━\n` +
+      `The writer gave you this specific topic/experience to write about:\n` +
+      ideas.map((idea, i) => `${i + 1}. ${idea}`).join("\n") + `\n\n` +
+      `Do NOT switch to a different topic. Use the writer's idea as the article's core story.\n` +
+      `Trending data below is for context only — to frame the article's angle, not to replace the topic.\n`
+    : `No specific topic given. Pick the ONE most compelling angle from trending below.\n`;
 
   const prompt =
     `You are ghostwriting a dev.to article for a developer from Batam, Indonesia.\n` +
-    `First person. Honest. Real mistakes. Real wins. Specific numbers over vague claims.\n` +
-    ideasContext + "\n\n" +
-    `TRENDING RIGHT NOW:\n${trendingContext}\n\n` +
+    `First person. Honest. Real mistakes. Real wins. Specific numbers over vague claims.\n\n` +
+    topicBlock + `\n` +
+    `TRENDING RIGHT NOW (context/framing only${hasIdeas ? ", not the topic" : " — pick from here"}):\n${trendingContext}\n\n` +
     `━━━ TITLE FORMULA (pick the one that fits best) ━━━\n` +
     `- "I [X] for [N] Days. [Specific thing] Changed on Day [N]." (use period not dash)\n` +
     `- "[Tool] Burned [specific number]. Here's the Habit That Prevents It."\n` +
