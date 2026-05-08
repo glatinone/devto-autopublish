@@ -3,7 +3,7 @@ title: "I Struggled with Data Analysis. Claude for Excel Changed Everything."
 published: false
 tags: devops, webdev, javascript, github
 description: "After weeks of frustration, Claude for Excel made data analysis a breeze."
-# devto_id: (filled after first publish)
+devto_id: 3633596
 ---
 
 At 2 AM, I was ready to throw my laptop out the window. I had just spent hours gaining zero insights from a sprawling sea of data. Then I stumbled upon Claude for Excel, and suddenly everything clicked into place.
