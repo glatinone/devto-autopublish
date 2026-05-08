@@ -43,41 +43,50 @@ export default {
 
 async function runPipeline(env, forceTopic = null) {
   console.log("🚀 Pipeline started");
+  try {
+    // Priority: active series → saved ideas → trending
+    const activeSeries = await getActiveSeries(env);
+    const ideas        = forceTopic ? [forceTopic] : await getIdeas(env);
+    const trending     = await getTrendingTopics();
+    console.log(`📈 ${trending.length} trending articles fetched`);
 
-  // Priority: active series → saved ideas → trending
-  const activeSeries = await getActiveSeries(env);
-  const ideas        = forceTopic ? [forceTopic] : await getIdeas(env);
-  const trending     = await getTrendingTopics();
-  console.log(`📈 ${trending.length} trending articles fetched`);
+    let article;
+    let context = "";
 
-  let article;
-  let context = "";
+    if (!forceTopic && activeSeries) {
+      const next = activeSeries.articles[activeSeries.currentIndex];
+      console.log(`📚 Series article ${activeSeries.currentIndex + 1}/${activeSeries.articles.length}: "${next.title}"`);
+      article = await generateSeriesArticle(next, activeSeries, trending, ideas, env);
+      context = `_Series: *${activeSeries.title}* — Part ${activeSeries.currentIndex + 1}/${activeSeries.articles.length}_`;
 
-  if (!forceTopic && activeSeries) {
-    const next = activeSeries.articles[activeSeries.currentIndex];
-    console.log(`📚 Generating series article ${activeSeries.currentIndex + 1}/${activeSeries.articles.length}: "${next.title}"`);
-    article = await generateSeriesArticle(next, activeSeries, trending, ideas, env);
-    context = `_Series: *${activeSeries.title}* — Part ${activeSeries.currentIndex + 1}/${activeSeries.articles.length}_`;
-
-    // Advance index or complete series
-    activeSeries.currentIndex++;
-    if (activeSeries.currentIndex >= activeSeries.articles.length) {
-      await env.IDEAS_KV.delete("series:active");
-      context += `\n\n🎉 *Series selesai!*`;
+      activeSeries.currentIndex++;
+      if (activeSeries.currentIndex >= activeSeries.articles.length) {
+        await env.IDEAS_KV.delete("series:active");
+        context += `\n\n🎉 *Series selesai!*`;
+      } else {
+        await env.IDEAS_KV.put("series:active", JSON.stringify(activeSeries));
+      }
     } else {
-      await env.IDEAS_KV.put("series:active", JSON.stringify(activeSeries));
+      article = await generateArticle(trending, ideas, env);
+      context = ideas.length > 0
+        ? `_Wrote from your ${ideas.length} saved idea(s). Inbox cleared._`
+        : `_Generated from trending topics._`;
+      if (!forceTopic && ideas.length > 0) await clearIdeas(env);
     }
-  } else {
-    article = await generateArticle(trending, ideas, env);
-    context = ideas.length > 0
-      ? `_Wrote from your ${ideas.length} saved idea(s). Inbox cleared._`
-      : `_Generated from trending topics._`;
-    if (!forceTopic && ideas.length > 0) await clearIdeas(env);
-  }
 
-  console.log(`✍️  Generated: "${article.title}"`);
-  await offerHookSelection(article, context, env);
-  console.log("✅ Pipeline finished — waiting for /hook selection");
+    console.log(`✍️  Generated: "${article.title}"`);
+    await offerHookSelection(article, context, env);
+    console.log("✅ Pipeline finished — waiting for /hook selection");
+
+  } catch (err) {
+    console.error("❌ Pipeline error:", err.message, err.stack);
+    await sendTelegram(
+      `❌ *Pipeline gagal*\n\n` +
+      `\`${err.message?.slice(0, 300) || "Unknown error"}\`\n\n` +
+      `_Ideas kamu masih aman di inbox. Coba /generate lagi._`,
+      env
+    ).catch(() => {});
+  }
 }
 
 // ─── Telegram Handler ──────────────────────────────────────────────────────
@@ -442,6 +451,8 @@ async function generateSeriesArticle(seriesArticle, series, trending, ideas, env
       ? `- This is the LAST part. End with a strong conclusion and a real debate question.\n`
       : `- End with a natural teaser for Part ${series.currentIndex + 2} (one sentence, not a cliffhanger cliche).\n`) +
     `\nRULES: minimum 900 words · 2+ real working code blocks · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]\n\n` +
+    `━━━ SELF-CHECK BEFORE OUTPUT ━━━\n` +
+    `Fix before returning: em dashes (—) → commas/periods/colons · signposting phrases → delete · missing contractions → add\n\n` +
     `JSON only: { "title": "...", "description": "...(max 140 chars)", "tags": "t1, t2, t3, t4", "body": "...(full article in markdown)" }`;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -449,11 +460,20 @@ async function generateSeriesArticle(seriesArticle, series, trending, ideas, env
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
     body: JSON.stringify({ model: "gpt-4o-mini", max_tokens: 8192, response_format: { type: "json_object" }, messages: [{ role: "user", content: prompt }] }),
   });
-  if (!res.ok) throw new Error(`OpenAI error: ${res.status}`);
-  const data = await res.json();
-  const parsed = JSON.parse(data.choices[0].message.content);
-  parsed.series = series.title; // add series name for frontmatter
-  parsed.body = await humanizeArticle(parsed.body, env);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const raw = await res.json();
+  const content = raw.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenAI returned empty content");
+  let parsed;
+  try {
+    parsed = JSON.parse(content.trim());
+  } catch (e) {
+    throw new Error(`JSON parse failed: ${content.slice(0, 200)}`);
+  }
+  parsed.series = series.title;
   return parsed;
 }
 
@@ -1064,6 +1084,13 @@ async function generateArticle(trending, ideas, env) {
     `- If you mention cost or metrics, use exact numbers ($0.42, 9 days, 47 tests)\n` +
     `- Body is PROSE, not bullet lists. Bullets only for a 2-3 item action list max.\n\n` +
     `RULES: minimum 1000 words · 2+ real working code blocks · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]\n\n` +
+    `━━━ SELF-CHECK BEFORE OUTPUT ━━━\n` +
+    `Scan your own output before returning. Fix any remaining:\n` +
+    `- Em dashes (—) → replace with comma/period/colon\n` +
+    `- "Let's dive in" / "In conclusion" / signposting phrases → delete\n` +
+    `- "crucial/robust/seamless/leverage/game-changer" → plain language\n` +
+    `- Paragraphs of 5+ sentences → split in two\n` +
+    `- Missing contractions (I will → I'll, do not → don't)\n\n` +
     `JSON only: { "title":"...", "description":"...(max 140 chars)", "tags":"t1,t2,t3,t4", "body":"...(full article in markdown)" }`;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1071,10 +1098,18 @@ async function generateArticle(trending, ideas, env) {
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.OPENAI_API_KEY}` },
     body   : JSON.stringify({ model: "gpt-4o-mini", max_tokens: 8192, response_format: { type: "json_object" }, messages: [{ role: "user", content: prompt }] }),
   });
-  if (!res.ok) throw new Error(`OpenAI error ${res.status}: ${await res.text()}`);
-  const parsed = JSON.parse((await res.json()).choices[0].message.content.trim());
-  parsed.body = await humanizeArticle(parsed.body, env);
-  return parsed;
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI error ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const raw = await res.json();
+  const content = raw.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenAI returned empty content");
+  try {
+    return JSON.parse(content.trim());
+  } catch (e) {
+    throw new Error(`JSON parse failed. OpenAI response: ${content.slice(0, 200)}`);
+  }
 }
 
 // ─── Humanizer Pass ────────────────────────────────────────────────────────
