@@ -140,6 +140,19 @@ async function handleTelegram(body, env) {
 
   // /generate [topic]
   if (text.startsWith("/generate")) {
+    // Block if a draft is already waiting for hook selection
+    const pendingRaw = await env.IDEAS_KV.get("draft:pending");
+    if (pendingRaw) {
+      const { article } = JSON.parse(pendingRaw);
+      await sendTelegram(
+        `⚠️ *Ada draft yang belum selesai:*\n"${article.title}"\n\n` +
+        `Pilih hook dulu sebelum generate yang baru:\n` +
+        `/hook — lihat 3 opsi opening\n` +
+        `/hook skip — lewati draft ini & generate baru`,
+        env
+      );
+      return;
+    }
     const topic = text.replace("/generate", "").trim();
     await sendTelegram(
       topic
@@ -252,6 +265,13 @@ async function handleTelegram(body, env) {
       `/ideas · /clear · /trending · /prompt · /digest`,
       env
     );
+    return;
+  }
+
+  // Detect "hook 1/2/3" without slash (common typo)
+  if (/^hook\s*[123]$/i.test(text)) {
+    const num = text.replace(/\D/g, "");
+    await handleHookSelection(`/hook ${num}`, env);
     return;
   }
 
@@ -865,6 +885,16 @@ async function handleHookSelection(text, env) {
 
   const { article, hooks, context } = JSON.parse(raw);
   const arg = text.replace("/hook", "").trim();
+
+  // /hook skip — discard pending draft so /generate can run fresh
+  if (arg === "skip") {
+    await env.IDEAS_KV.delete("draft:pending");
+    await sendTelegram(
+      `🗑️ Draft *"${article.title}"* dibatalkan.\n\nKirim /generate untuk buat artikel baru.`,
+      env
+    );
+    return;
+  }
 
   // /hook (no number) → show options again
   if (!arg) {
