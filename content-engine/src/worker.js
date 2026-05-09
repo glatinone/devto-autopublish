@@ -67,10 +67,13 @@ async function runPipeline(env, forceTopic = null) {
         await env.IDEAS_KV.put("series:active", JSON.stringify(activeSeries));
       }
     } else {
-      article = await generateArticle(trending, ideas, env);
+      const contentType = await getNextContentType(env);
+      console.log(`📝 Content type: ${contentType}`);
+      article = await generateArticle(trending, ideas, env, contentType);
+      const typeLabel = { tutorial: "📘 Tutorial", story: "📖 Story", quickwin: "⚡ Quick Win" }[contentType];
       context = ideas.length > 0
-        ? `_Wrote from your ${ideas.length} saved idea(s). Inbox cleared._`
-        : `_Generated from trending topics._`;
+        ? `${typeLabel} · _from your ${ideas.length} saved idea(s). Inbox cleared._`
+        : `${typeLabel} · _generated from trending topics._`;
       if (!forceTopic && ideas.length > 0) await clearIdeas(env);
     }
 
@@ -210,22 +213,24 @@ async function handleTelegram(body, env) {
 
   // /prompt
   if (text === "/prompt") {
+    const rotationRaw = await env.IDEAS_KV.get("content:rotation_index");
+    const rotIdx      = rotationRaw ? parseInt(rotationRaw) : 0;
+    const nextType    = CONTENT_TYPES[rotIdx % CONTENT_TYPES.length];
+    const cycle       = CONTENT_TYPES.map((t, i) => {
+      const icons = { tutorial: "📘", story: "📖", quickwin: "⚡" };
+      const names = { tutorial: "Deep Tutorial (1200+ words)", story: "Story/Opinion (800 words)", quickwin: "Quick Win (400-600 words)" };
+      return `${i === rotIdx % CONTENT_TYPES.length ? "▶️" : "  "} ${icons[t]} ${names[t]}`;
+    }).join("\n");
     await sendTelegram(
-      `🧠 *Formula artikel AI:*\n\n` +
-      `*TITLE:* Specific + curiosity gap\n` +
-      `• "I [X] for [time] — here's what I found"\n` +
-      `• "The [X] nobody tells you about [topic]"\n` +
-      `• "Stop [X]. Do [Y] instead."\n\n` +
-      `*STRUCTURE:*\n` +
-      `1. Hook — scene nyata, bukan intro generic\n` +
-      `2. Setup — konteks & stakes\n` +
-      `3. Challenge — kode buggy yang relatable\n` +
-      `4. Breakthrough — solusi + kode bersih\n` +
-      `5. Deeper Insight — prinsip lebih besar\n` +
-      `6. What I'd Do Differently\n` +
-      `7. Closing Question — drive comments\n\n` +
+      `🧠 *Content Rotation Formula*\n\n` +
+      `*Siklus saat ini:*\n${cycle}\n\n` +
+      `─────────────────\n` +
+      `📘 *Tutorial:* Problem → broken code → fix + why → lesson → debate Q\n` +
+      `📖 *Story:* Emotional peak → belief → it broke → turning point → lesson\n` +
+      `⚡ *Quick Win:* Pain → fix (1 code block) → why it works → gotchas\n\n` +
       `*INPUT PRIORITY:*\n` +
-      `Series → Ideas kamu → Trending`,
+      `Series → Ideas kamu → Trending\n\n` +
+      `_/generate [topik] akan pakai format berikutnya dalam siklus._`,
       env
     );
     return;
@@ -246,14 +251,20 @@ async function handleTelegram(body, env) {
     const seriesInfo   = activeSeries
       ? `📚 Active series: *${activeSeries.title}*\n   Part ${activeSeries.currentIndex + 1}/${activeSeries.articles.length} next\n`
       : `📚 No active series\n`;
-    const draftInfo = pendingDraft
+    const rotationRaw  = await env.IDEAS_KV.get("content:rotation_index");
+    const rotIdx       = rotationRaw ? parseInt(rotationRaw) : 0;
+    const nextType     = CONTENT_TYPES[rotIdx % CONTENT_TYPES.length];
+    const typeEmoji    = { tutorial: "📘", story: "📖", quickwin: "⚡" };
+    const typeLabel    = { tutorial: "Deep Tutorial", story: "Story/Opinion", quickwin: "Quick Win" };
+    const draftInfo    = pendingDraft
       ? `\n⏳ *Draft menunggu hook:* ketik /hook untuk lihat opsi\n`
       : "";
     await sendTelegram(
       `🟢 *Content Engine*\n\n` +
       `${seriesInfo}` +
       `💡 Ideas in inbox: *${ideas.length}*\n` +
-      `🕐 Cron: Weekdays 09:00 WIB` +
+      `🕐 Cron: Weekdays 09:00 WIB\n` +
+      `${typeEmoji[nextType]} Next article type: *${typeLabel[nextType]}*` +
       draftInfo + `\n\n` +
       `*Commands:*\n` +
       `/series [topik] — plan series\n` +
@@ -1069,65 +1080,121 @@ async function getTrendingTopics() {
   return results.sort((a, b) => (b.reactions + b.comments * 3) - (a.reactions + a.comments * 3)).slice(0, 8);
 }
 
+// ─── Content Type Rotation ────────────────────────────────────────────────
+
+const CONTENT_TYPES = ["tutorial", "story", "quickwin"];
+
+async function getNextContentType(env) {
+  const raw = await env.IDEAS_KV.get("content:rotation_index");
+  const idx = raw ? parseInt(raw) : 0;
+  await env.IDEAS_KV.put("content:rotation_index", String((idx + 1) % CONTENT_TYPES.length));
+  return CONTENT_TYPES[idx % CONTENT_TYPES.length];
+}
+
+function buildContentTypeBlock(contentType) {
+  if (contentType === "tutorial") {
+    return {
+      label  : "DEEP TUTORIAL",
+      titles : [
+        `"How I [X] Without [common pain] (Step-by-Step)"`,
+        `"[Tool] in [N] Minutes. No [common obstacle]."`,
+        `"The [X] Setup That Took Me [N] Hours to Get Right."`,
+      ],
+      structure:
+        `HOOK: Drop into a specific moment of confusion or failure. Real file name, error message, or command.\n` +
+        `SETUP: What you were trying to build and why it mattered.\n` +
+        `## The Problem: Real broken code or wrong approach. Show the error.\n` +
+        `## The Fix: Working code with inline comments explaining each line. Explain WHY, not just WHAT.\n` +
+        `## Why It Works: The underlying principle. Generalise to 1 broader lesson.\n` +
+        `## What I'd Skip Next Time: 2-3 specific shortcuts you discovered.\n` +
+        `CLOSING: One sentence regret. One debate question with two real sides.\n`,
+      rules: `minimum 1200 words · minimum 3 code blocks · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]`,
+    };
+  }
+  if (contentType === "story") {
+    return {
+      label  : "STORY / OPINION",
+      titles : [
+        `"I [X] for [N] Days. [Specific thing] Changed on Day [N]."`,
+        `"I Was Wrong About [X]. Here Is the Moment That Changed It."`,
+        `"The [X] Nobody Tells You About [Y]."`,
+        `"[Tool] Only Worked When I Stopped [doing obvious thing]."`,
+      ],
+      structure:
+        `HOOK: Start at the emotional peak or the embarrassing moment. One specific detail (time, number, name).\n` +
+        `ACT 1: What you believed before. Why you were confident.\n` +
+        `ACT 2: The moment it broke. The specific thing that proved you wrong.\n` +
+        `## [Turning Point heading]: What you discovered. One code block showing before/after if relevant.\n` +
+        `## [Lesson heading]: The bigger principle. Why this matters beyond your specific case.\n` +
+        `CLOSING: What you'd tell past-you in one sentence. Then one polarising question that invites debate.\n`,
+      rules: `minimum 800 words · 1-2 code blocks (only if natural, not forced) · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]`,
+    };
+  }
+  // quickwin
+  return {
+    label  : "QUICK WIN",
+    titles : [
+      `"Stop [X]. [Specific alternative] Takes 3 Minutes."`,
+      `"One [Tool] Setting That [Specific benefit]. Most Devs Miss It."`,
+      `"[N]-Line Fix for [Common Problem]."`,
+      `"The [Tool] Trick I Wish Someone Had Told Me on Day 1."`,
+    ],
+    structure:
+      `HOOK: Name the exact pain in sentence 1. Then immediately say you have the fix.\n` +
+      `THE PROBLEM: 1 short paragraph. Specific, relatable.\n` +
+      `## The Fix: One focused code block. Max 20 lines. Clear comments.\n` +
+      `WHY IT WORKS: 2-3 sentences. No fluff.\n` +
+      `VARIATIONS: 1-2 short variations or gotchas to watch out for.\n` +
+      `CLOSING: One sentence. One punchy question.\n`,
+    rules: `400-600 words · exactly 1 focused code block · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]`,
+  };
+}
+
 // ─── Generate Article ──────────────────────────────────────────────────────
 
-async function generateArticle(trending, ideas, env) {
+async function generateArticle(trending, ideas, env, contentType = "tutorial") {
   const trendingContext = trending.map(t => `- "${t.title}" [${t.tag}] - ${t.reactions} reactions, ${t.comments} comments`).join("\n");
+  const typeBlock       = buildContentTypeBlock(contentType);
 
   // Two modes: idea-driven (writer has specific topic) vs trending-driven (AI picks freely)
-  const hasIdeas    = ideas.length > 0;
-  const topicBlock  = hasIdeas
+  const hasIdeas   = ideas.length > 0;
+  const topicBlock = hasIdeas
     ? `━━━ TOPIC (REQUIRED — write about THIS, not trending) ━━━\n` +
       `The writer gave you this specific topic/experience to write about:\n` +
       ideas.map((idea, i) => `${i + 1}. ${idea}`).join("\n") + `\n\n` +
-      `Do NOT switch to a different topic. Use the writer's idea as the article's core story.\n` +
-      `Trending data below is for context only — to frame the article's angle, not to replace the topic.\n`
+      `Do NOT switch to a different topic. Use the writer's idea as the core story.\n` +
+      `Trending data is for framing only, not for choosing the topic.\n`
     : `No specific topic given. Pick the ONE most compelling angle from trending below.\n`;
+
+  const titleOptions = typeBlock.titles.map(t => `- ${t}`).join("\n");
 
   const prompt =
     `You are ghostwriting a dev.to article for a developer from Batam, Indonesia.\n` +
+    `FORMAT THIS TIME: ${typeBlock.label}\n` +
     `First person. Honest. Real mistakes. Real wins. Specific numbers over vague claims.\n\n` +
     topicBlock + `\n` +
     `TRENDING RIGHT NOW (context/framing only${hasIdeas ? ", not the topic" : " — pick from here"}):\n${trendingContext}\n\n` +
-    `━━━ TITLE FORMULA (pick the one that fits best) ━━━\n` +
-    `- "I [X] for [N] Days. [Specific thing] Changed on Day [N]." (use period not dash)\n` +
-    `- "[Tool] Burned [specific number]. Here's the Habit That Prevents It."\n` +
-    `- "Stop [X]. [Specific alternative] Does the Same Thing Faster."\n` +
-    `- "I Was Wrong About [X]. Here Is the Moment That Changed It."\n` +
-    `- "[Tool] Only Worked When I Stopped [doing obvious thing]."\n` +
+    `━━━ TITLE FORMULA for ${typeBlock.label} ━━━\n` +
+    titleOptions + `\n` +
     `NO em dashes in titles. Use a period or colon to separate two parts.\n\n` +
-    `━━━ STRUCTURE ━━━\n` +
-    `HOOK (first 2-3 sentences): Drop mid-scene. Include a specific time, number, or named thing. Reverse the emotional valence in sentence 2 or 3. No "In this article", no "Have you ever".\n` +
-    `SETUP: Context and what was at stake. One paragraph.\n` +
-    `## [Section heading]: The problem with real error or messy code.\n` +
-    `## [Section heading]: The fix. Real working code. Explain the WHY not just the WHAT.\n` +
-    `## [Section heading]: The bigger principle behind the fix.\n` +
-    `CLOSING (no heading): 1-2 sentences what you'd do differently. Then ONE specific question to drive comments (not "what do you think?" - something with a real stake or debate).\n\n` +
-    `━━━ BANNED (these make it look AI-written, never use them) ━━━\n` +
-    `- Em dashes (—) anywhere in title or body. Use commas, periods, colons, or parentheses instead.\n` +
+    `━━━ STRUCTURE for ${typeBlock.label} ━━━\n` +
+    typeBlock.structure + `\n` +
+    `━━━ BANNED (AI tells — never use) ━━━\n` +
+    `- Em dashes (—) anywhere. Use commas, periods, colons, parentheses.\n` +
     `- "Let's dive in" / "In this article" / "Without further ado" / "In conclusion"\n` +
-    `- "it's worth noting" / "it's important to remember" / "needless to say"\n` +
     `- "crucial" / "robust" / "seamless" / "leverage" / "game-changer" / "powerful"\n` +
-    `- Three-item adjective stacks: "fast, reliable, and scalable"\n` +
+    `- Three-item adjective stacks ("fast, reliable, scalable")\n` +
     `- "It's not just X, it's Y" constructions\n` +
-    `- Generic positive endings: "exciting times ahead" / "the future looks bright"\n` +
-    `- Vague attributions: "many developers" / "experts agree" / "it's widely known"\n` +
-    `- Headers followed immediately by a one-line restatement before real content\n\n` +
+    `- Generic positive endings / vague attributions\n` +
+    `- Headers followed immediately by a one-line restatement\n\n` +
     `━━━ STYLE ━━━\n` +
-    `- Use contractions (I'll, don't, can't, wasn't)\n` +
-    `- Vary sentence length. Short punchy ones. Then longer ones that give context and let an idea breathe.\n` +
-    `- Occasional parenthetical aside as an aside (like this)\n` +
-    `- Self-deprecating humor is fine in one place\n` +
-    `- If you mention cost or metrics, use exact numbers ($0.42, 9 days, 47 tests)\n` +
-    `- Body is PROSE, not bullet lists. Bullets only for a 2-3 item action list max.\n\n` +
-    `RULES: minimum 1000 words · 2+ real working code blocks · tags: exactly 4 from [${NICHE_TAGS.join(", ")}]\n\n` +
+    `- Contractions (I'll, don't, wasn't). Vary sentence length.\n` +
+    `- Specific numbers over vague claims ($0.42, 9 days, 47 tests).\n` +
+    `- Body is PROSE. Bullets only for a 2-3 item action list max.\n` +
+    `- One parenthetical aside is fine. Self-deprecating humor in one place.\n\n` +
+    `RULES: ${typeBlock.rules}\n\n` +
     `━━━ SELF-CHECK BEFORE OUTPUT ━━━\n` +
-    `Scan your own output before returning. Fix any remaining:\n` +
-    `- Em dashes (—) → replace with comma/period/colon\n` +
-    `- "Let's dive in" / "In conclusion" / signposting phrases → delete\n` +
-    `- "crucial/robust/seamless/leverage/game-changer" → plain language\n` +
-    `- Paragraphs of 5+ sentences → split in two\n` +
-    `- Missing contractions (I will → I'll, do not → don't)\n\n` +
+    `Fix before returning: em dashes → commas/periods · signposting phrases → delete · missing contractions → add\n\n` +
     `JSON only: { "title":"...", "description":"...(max 140 chars)", "tags":"t1,t2,t3,t4", "body":"...(full article in markdown)" }`;
 
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
