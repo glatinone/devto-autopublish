@@ -8,7 +8,7 @@ on:
       - "articles/*.md"
 
 permissions:
-  contents: write   # needed to commit devto_id back to repo
+  contents: write
 
 jobs:
   publish:
@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Need previous commit to detect new/modified files
+          fetch-depth: 2
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -57,3 +57,19 @@ jobs:
             git commit -m "chore: backfill devto_id [skip ci]"
             git push
           )
+
+      - name: Dispatch sync to personal-portfolio
+        if: steps.changed.outputs.files != ''
+        env:
+          PORTFOLIO_DISPATCH_TOKEN: ${{ secrets.PORTFOLIO_DISPATCH_TOKEN }}
+        run: |
+          if [ -n "$PORTFOLIO_DISPATCH_TOKEN" ]; then
+            curl -s -X POST \
+              -H "Authorization: Bearer $PORTFOLIO_DISPATCH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/glatinone/personal-portfolio/dispatches \
+              -d '{"event_type":"articles-updated"}'
+            echo "Portfolio sync dispatched."
+          else
+            echo "PORTFOLIO_DISPATCH_TOKEN not set — skipping dispatch."
+          fi
