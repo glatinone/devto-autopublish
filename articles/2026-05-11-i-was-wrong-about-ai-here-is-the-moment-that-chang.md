@@ -3,7 +3,7 @@ title: "I Was Wrong About AI. Here Is the Moment That Changed It."
 published: false
 tags: webdev, devops, javascript, cloudflare
 description: "An eye-opening experience that flipped my view on AI development forever."
-# devto_id: (filled after first publish)
+devto_id: 3649402
 ---
 
 The debugging tool flagged a staggering 150 issues in my code almost instantly. I was astonished by how many mistakes I had made and how far I still had to go. This moment revealed the complexity of AI that I had underestimated all along.
