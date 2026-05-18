@@ -1,0 +1,112 @@
+---
+title: I Dumped My Entire Codebase into Gemma 4. It Found a Bug My Team Missed for 3 Months.
+published: false
+tags: devchallenge, gemmachallenge, gemma, ai
+cover_image:
+---
+
+*This is a submission for the [Gemma 4 Challenge: Write About Gemma 4](https://dev.to/challenges/google-gemma-2026-05-06)*
+
+---
+
+The bug had been in production for 90 days. Three sprint reviews. Two refactors nearby. One team member who actually touched that file and left a comment saying "looks fine."
+
+I found it in 4 minutes by pasting 47,000 tokens into Gemma 4 31B and asking one question.
+
+I want to tell you this is a story about AI being brilliant. It is not. It is a story about what happens when you stop treating a 128K context window as a spec sheet number and start treating it as a tool.
+
+---
+
+## The Bug Was Invisible at File Level
+
+We run a mid-sized Python backend. Not a startup toy project, not a monolith from 2009 either. Around 18,000 lines across 200-ish files, with a payment reconciliation module that processes about 4,000 transactions a day.
+
+For three months we had an off-by-one error in how we accumulated daily totals. The kind of bug that doesn't crash anything, doesn't throw an exception, and stays quiet until someone runs a quarterly audit. Finance flagged it. Our first assumption was the database. Our second assumption was a race condition. Our third assumption was a rounding issue inherited from a third-party SDK.
+
+All wrong. The bug was in how we correlated timestamps across two functions that lived 800 lines apart in the same module. You could not see it by reading either function. You had to hold both in your head at the same time, along with the utility function they both relied on, to see the logic drift.
+
+Nobody held all three at once. Humans don't naturally do that across 800 lines.
+
+---
+
+## What I Actually Did
+
+I pulled the relevant module (about 1,400 lines), the shared utilities it imports (another 600 lines), and the test file (300 lines). Total: roughly 2,300 lines of Python. That's somewhere around 46,000 tokens.
+
+I chose Gemma 4 31B, accessed via OpenRouter, specifically because of the context window size and the reasoning capability. The 128K window was not the point in itself. The point was that 128K let me stop chunking.
+
+Every time I had tried to debug this with smaller-context tools I was feeding pieces of the problem. Paste function A, get feedback. Paste function B, get different feedback. Try to synthesize the two answers manually. That synthesis step is where the bug kept hiding.
+
+With 31B I pasted the full thing at once:
+
+```python
+# I wrapped the content in a simple prompt structure:
+prompt = f"""
+You are reviewing Python source code for a financial reconciliation system.
+Below is the complete module, its utility dependencies, and its test suite.
+
+Find any logic errors related to timestamp handling, accumulation order,
+or correlation between functions. Be specific about line numbers and
+explain the interaction that causes the error, not just the error itself.
+
+<module>
+{reconciliation_module}
+</module>
+
+<utilities>
+{shared_utils}
+</utilities>
+
+<tests>
+{test_suite}
+</tests>
+"""
+```
+
+That's it. No chunking. No iterative back-and-forth. One completion.
+
+The response came back in about 40 seconds. It flagged three things. Two were style notes I already knew about. The third was this:
+
+> `accumulate_daily()` uses `record.created_at` for grouping (line 312), but `reconcile_period()` filters by `record.settled_at` (line 1089). For records that settle in a different calendar day than they were created, these two functions will assign the same record to different days. The test suite only creates records where `created_at` and `settled_at` are within the same UTC day, so this has never been caught by the test harness.
+
+I sat there for a second. Then I checked line 312. Then line 1089. Then the test fixtures.
+
+It was exactly right.
+
+---
+
+## Why This Worked and Why It Didn't Work Before
+
+The test suite was the key detail. The model wasn't just spotting a timestamp mismatch between two functions. It was reading the tests and noticing the gap: "the tests don't cover the case where these dates differ." That kind of cross-file reasoning requires the full context to be present simultaneously.
+
+I had tried a similar experiment with GPT-4 earlier in the week by pasting sections iteratively. It flagged the `created_at` vs `settled_at` discrepancy in isolation but didn't make the connection to the test fixtures because the test file wasn't in scope when it saw the functions. The insight was split across two separate completions, and I didn't connect them.
+
+With the full module in one pass, the model could see the claim ("here is how we accumulate") and the verification ("here is what the tests assert") in the same window, and notice they didn't match on the cross-day case.
+
+---
+
+## The Honest Limits
+
+This is not a "just paste your codebase and it will find all your bugs" story. A few caveats that matter:
+
+The 31B model via OpenRouter has latency. A 46K token completion takes real time. For quick questions I still reach for smaller models or a local setup. The 31B is the right choice when the task genuinely needs the full picture and you can afford the wait.
+
+The quality of the question matters a lot. My first attempt used a vague prompt ("find any issues"). It returned generic style feedback. The version that found the bug asked specifically for "logic errors related to timestamp handling" because I had already narrowed the domain. The model amplified my hypothesis. It did not generate one from nothing.
+
+And the model still missed one actual bug I found later through manual review. Not a humiliating miss. But a reminder that "found the bug I missed" and "found all the bugs" are very different sentences.
+
+---
+
+## What This Actually Changes
+
+The 128K context window is not about being able to process more. It is about being able to stop decomposing.
+
+Most debugging assistance with AI is a decomposition problem: I have to decide what to show and what to leave out, and that editorial decision is exactly where bugs hide. The moment I have to decide "this function is probably not relevant," I might be wrong about that, and the model will never tell me.
+
+When the window is large enough that I can stop curating, the model sees the same thing I should be seeing: the whole picture, including the parts I didn't think to highlight.
+
+That is not a small thing. It changes the failure mode from "I showed it the wrong piece" to "I asked the wrong question." The second failure mode is actually fixable.
+
+---
+
+What's the most expensive debugging session you've had that turned out to be caused by something only visible across multiple files? I'm curious whether the cross-file blindspot is universal or just a symptom of how our specific module grew.
