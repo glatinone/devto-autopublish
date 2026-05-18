@@ -3,7 +3,7 @@ title: "I Used Gemma 4 for 30 Days. My Opinion Shifted on Day 15."
 published: false
 tags: devops, webdev, github, javascript
 description: "Gemma 4 changed my view on project management and efficiency in software development."
-# devto_id: (filled after first publish)
+devto_id: 3693877
 ---
 
 My Gemma 4 upgrade installation was complete at 2:23 PM. I felt like I was finally in control of my projects. By 2:30 PM, my terminal was flooded with cryptic error messages.
