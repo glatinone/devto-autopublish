@@ -3,7 +3,7 @@ title: "I Built a Kubernetes Alternative. It Changed My Perspective on Complexit
 published: false
 tags: devops, webdev, javascript, github
 description: "Building a Kubernetes alternative revealed the hidden complexities I’d previously overlooked."
-# devto_id: (filled after first publish)
+devto_id: 3753126
 ---
 
 After three long nights of coding, I stood on the edge of quitting. The most recent error? 'Connection refused: too many retries.' How does one recover from such a humiliating message? I guess you just pick yourself up and try again.
