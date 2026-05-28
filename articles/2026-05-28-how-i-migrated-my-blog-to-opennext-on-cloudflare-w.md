@@ -3,7 +3,7 @@ title: "How I Migrated My Blog to OpenNext on Cloudflare Workers Without Losing 
 published: false
 tags: cloudflare, webdev, devops, javascript
 description: "Step-by-step guide to migrating blogs smoothly while maintaining audience engagement."
-# devto_id: (filled after first publish)
+devto_id: 3767604
 ---
 
 My terminal blared at 8:32 PM, echoing the command I had run to deploy my blog: ‘Deployment successful.’ I felt a surge of triumph. By midnight, Google Analytics showed a steep drop in traffic.
