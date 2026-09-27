@@ -1,3 +1,10 @@
+---
+title: "Your AI agent is the most over-privileged account you own"
+published: true
+tags: security, ai, agents, tutorial
+devto_id: 4068176
+---
+
 A new hire at most companies waits days for access. Laptop, then email, then the one repo they need, and every extra permission goes through a ticket someone grumbles about.
 
 An AI agent gets onboarded in about a minute. Full shell. Your personal API keys, because they were already in the environment. Unrestricted network. Read access to your entire home directory, including the `.ssh` folder nobody thinks about. We spent twenty years internalizing least privilege for people and service accounts, then handed an agent more access than we would give a contractor, on day one, without an interview.

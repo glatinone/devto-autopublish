@@ -1,3 +1,11 @@
+---
+title: "Solstice — A Game About Holding the Light"
+published: true
+tags: devchallenge, gamechallenge, gamedev, javascript
+description: "A minimalist HTML5 Canvas survival game built for the June Solstice Game Jam. Hold the light as long as you can before darkness takes you."
+devto_id: 3840710
+---
+
 *This is a submission for the [June Solstice Game Jam](https://dev.to/challenges/june-game-jam-2026-06-03)*
 
 ## The Game

@@ -1,3 +1,10 @@
+---
+title: "The MCP attack your code review cannot see"
+published: true
+tags: security, mcp, ai, python
+devto_id: 4068131
+---
+
 Here is a line from an MCP manifest that would pass most code reviews:
 
 ```json

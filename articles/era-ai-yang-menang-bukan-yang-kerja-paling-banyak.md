@@ -1,3 +1,10 @@
+---
+title: "Di era AI, yang menang bukan yang kerja paling banyak"
+published: true
+tags: career, productivity, ai, mindset
+devto_id: 4016891
+---
+
 Saya mulai dari pertanyaan yang kelihatannya sederhana: mana yang lebih kuat, motivasi, disiplin, konsistensi, atau obsesi? Saya kira jawabannya salah satu dari empat itu. Ternyata bukan. Setelah saya pikir lebih jauh, pertanyaannya sendiri yang salah arah.
 
 Keempatnya bukan puncak apa-apa. Mereka cuma mesin eksekusi. Motivasi yang memulai. Disiplin yang membuat saya tetap jalan waktu motivasinya habis. Konsistensi yang bikin hasilnya menumpuk pelan-pelan. Obsesi yang memberi energi besar. Semuanya berguna, tapi semuanya bisa sia-sia kalau diarahkan ke hal yang salah.
