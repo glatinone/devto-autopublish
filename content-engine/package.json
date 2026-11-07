@@ -8,6 +8,6 @@
     "trigger": "wrangler dev --test-scheduled"
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.158.0"
   }
 }
