@@ -17,7 +17,8 @@
 Most developer blogs die because writing consistently is hard. This pipeline removes the friction:
 
 - **Send ideas to Telegram** anytime — shower thoughts, today's bug, something you learned
-- **Every weekday at 9am** a Cloudflare Worker turns your ideas into a full article draft
+- **Every weekday at 9am** a Cloudflare Worker turns your ideas into a full article draft and sends you three opening-hook options on Telegram
+- **Pick a hook** with `/hook 1|2|3` and the Worker commits the article to `articles/`
 - **GitHub Actions** pushes it to dev.to as a draft automatically
 - **You review and publish** from dev.to dashboard — one click, done
 
@@ -43,8 +44,8 @@ Your only job: send raw thoughts. The pipeline handles the rest.
 │  1. Fetch trending topics → dev.to API                  │
 │  2. Load your saved ideas → Cloudflare KV               │
 │  3. Generate article → OpenAI GPT-4o-mini               │
-│  4. Commit to main → GitHub API                         │
-│  5. Notify → Telegram                                   │
+│  4. Send 3 hook options → Telegram                      │
+│  5. On /hook N: commit to main → GitHub API             │
 └──────────────────────┬──────────────────────────────────┘
                        │ push to articles/*.md
                        ▼
@@ -59,9 +60,9 @@ Your only job: send raw thoughts. The pipeline handles the rest.
 │  Article created as draft                               │
 │  You review → click Publish → live 🚀                   │
 └─────────────────────────────────────────────────────────┘
-                       │ Sunday 08:00 WIB
+                       │ /digest (on demand)
                        ▼
-               📊 Weekly digest to Telegram
+               📊 Performance digest to Telegram
                (views, reactions, top articles)
 ```
 
@@ -124,13 +125,17 @@ Article appears as draft on dev.to within ~30 seconds.
 
 ### How updates work
 
-After first publish, copy the `devto_id` from the Actions log into your frontmatter:
+After the first publish, the workflow writes the new `devto_id` back into the article's
+frontmatter and commits it (`chore: backfill devto_id [skip ci]`):
 
 ```yaml
-devto_id: 3612154   ← add this
+devto_id: 3612154   ← added automatically
 ```
 
 Future pushes **update** the article instead of creating duplicates.
+
+Optional: if a `PORTFOLIO_DISPATCH_TOKEN` secret is set, the workflow also sends an
+`articles-updated` dispatch to `glatinone/personal-portfolio`. Without it, that step is skipped.
 
 ### Published status
 
@@ -147,11 +152,22 @@ The automation brain. Generates articles from your ideas every weekday.
 | Command | What it does |
 |---|---|
 | *any message* | Save as idea/inspiration for next article |
+| *a URL* | Scrape the page, extract insights, save them as an idea |
 | `/generate [topic]` | Generate article right now from a topic |
+| `/hook [1\|2\|3]` | Pick the opening for the pending draft and commit it (`/hook skip` discards it) |
+| `/series [topic]` | Plan a multi-part series; the daily cron then writes one part per run (`/series status`, `/series cancel`) |
+| `/suggest` | Topic suggestions based on your top-performing articles |
+| `/trending` | Show trending dev.to articles |
+| `/prompt` | Show the content-type rotation (tutorial, story, quick win) |
+| `/revise [dev.to url]` | Rewrite a published article using its comments and commit it with its `devto_id`, so the workflow updates the live article |
+| `/linkedin [dev.to url]` | Draft a LinkedIn post for an article; `/linkedin confirm` posts it |
 | `/ideas` | Show everything saved in your inbox |
-| `/clear` | Clear idea inbox |
+| `/clear` | Clear idea inbox (`/clear all`, `/clear 2`, `/clear 1 3 5`) |
 | `/digest` | Get your article performance stats now |
 | `/status` | Check pipeline health |
+
+The Worker has one cron trigger (`0 2 * * 1-5`, weekdays 09:00 WIB) for article generation. The
+digest is sent on demand with `/digest`; `wrangler.toml` does not schedule it.
 
 ### Setup
 
@@ -161,8 +177,11 @@ The automation brain. Generates articles from your ideas every weekday.
 cd content-engine
 npm install
 npx wrangler login
+npx wrangler kv namespace create IDEAS_KV   # put the returned id in wrangler.toml
 npx wrangler deploy
 ```
+
+`wrangler.toml` contains the KV namespace id of the original deployment; replace it with your own.
 
 **2. Set secrets**
 
@@ -173,6 +192,9 @@ npx wrangler secret put GITHUB_REPO         # glatinone/devto-autopublish
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 npx wrangler secret put DEVTO_USERNAME      # your dev.to username
+# optional, only for /linkedin
+npx wrangler secret put LINKEDIN_ACCESS_TOKEN
+npx wrangler secret put LINKEDIN_PERSON_ID
 ```
 
 **3. Register Telegram webhook**
@@ -215,12 +237,12 @@ devto_id: 123456
 | Field | Required | Notes |
 |---|---|---|
 | `title` | **Yes** | Article title |
-| `published` | No | Ignored on update — use dev.to dashboard |
+| `published` | No | Ignored: new articles are always created as drafts, and updates keep the dashboard setting |
 | `tags` | No | Max 4, comma-separated, lowercase |
 | `description` | No | SEO preview text |
 | `cover_image` | No | Full URL, recommended 1000×420px |
 | `series` | No | Groups articles on dev.to |
-| `devto_id` | No | Add after first publish to enable updates |
+| `devto_id` | No | Written back automatically after the first publish; enables updates |
 
 ---
 
@@ -230,7 +252,7 @@ devto_id: 123456
 |---|---|
 | Workflow doesn't trigger | File must be in `articles/` and pushed to `main` |
 | `DEVTO_API_KEY` not found | Secret name must be exactly `DEVTO_API_KEY` |
-| Duplicate articles | Add `devto_id` to frontmatter |
+| Duplicate articles | Check that the `devto_id` backfill commit landed; add `devto_id` to frontmatter by hand if not |
 | Worker doesn't generate | Check `npx wrangler tail` for error logs |
 | Telegram bot not responding | Re-register webhook URL after each deploy |
 | Article body too short | Check OpenAI API credits — gpt-4o-mini may truncate on low balance |
@@ -258,9 +280,12 @@ This repo does it for **~$0.20/month** on infrastructure you fully own and contr
 - [x] Cloudflare Worker cron — daily article generation
 - [x] Telegram idea inbox → AI article
 - [x] `/generate [topic]` on demand
-- [x] Weekly performance digest
-- [ ] `/generate` with series support — plan a 5-part series
-- [ ] Auto-fill `devto_id` back into the .md file after first publish
+- [x] Performance digest (`/digest`)
+- [x] Series planning (`/series`), one part per cron run
+- [x] Auto-fill `devto_id` back into the .md file after first publish
+- [x] Hook selection before commit (`/hook`)
+- [x] LinkedIn post drafts with confirmation (`/linkedin`)
+- [ ] Scheduled weekly digest (cron)
 - [ ] Cross-post to Hashnode
 - [ ] Voice memo input (WhatsApp → transcribe → article)
 - [ ] Comment reply drafts sent to Telegram for approval
@@ -269,4 +294,4 @@ This repo does it for **~$0.20/month** on infrastructure you fully own and contr
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
